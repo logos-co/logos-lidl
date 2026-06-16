@@ -19,7 +19,7 @@
             version = "0.1.0";
             src = ./.;
             nativeBuildInputs = [ pkgs.cmake pkgs.ninja ];
-            buildInputs = [ pkgs.gtest ];
+            buildInputs = [ pkgs.gtest pkgs.nlohmann_json ];
             cmakeFlags = [ "-GNinja" ];
             doCheck = true;
             checkPhase = ''
@@ -43,7 +43,7 @@
       devShells = forAllSystems ({ pkgs }: {
         default = pkgs.mkShell {
           nativeBuildInputs = [ pkgs.cmake pkgs.ninja ];
-          buildInputs = [ pkgs.gtest ];
+          buildInputs = [ pkgs.gtest pkgs.nlohmann_json ];
         };
       });
     };
