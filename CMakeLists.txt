@@ -33,6 +33,23 @@ install(EXPORT logos-lidlTargets
     DESTINATION lib/cmake/logos-lidl
 )
 
+# logos_lidl_c — the C ABI / JSON bridge over the core frontend. This is the
+# layer non-C++ SDKs (Rust, ...) link against: it exposes parse/serialize/
+# validate across the C boundary by exchanging the AST as JSON. nlohmann/json
+# is confined here so the core lib above stays dependency-free. Installed as a
+# plain archive (no CMake export) — consumers link it by path.
+find_package(nlohmann_json REQUIRED)
+add_library(logos_lidl_c STATIC
+    src/json.cpp
+    src/lidl_c.cpp
+)
+target_link_libraries(logos_lidl_c PUBLIC logos_lidl PRIVATE nlohmann_json::nlohmann_json)
+target_include_directories(logos_lidl_c PUBLIC
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+    $<INSTALL_INTERFACE:include>
+)
+install(TARGETS logos_lidl_c ARCHIVE DESTINATION lib)
+
 include(CMakePackageConfigHelpers)
 write_basic_package_version_file(
     "${CMAKE_CURRENT_BINARY_DIR}/logos-lidlConfigVersion.cmake"
@@ -53,6 +70,6 @@ if(LOGOS_LIDL_BUILD_TESTS)
     find_package(GTest REQUIRED)
     include(GoogleTest)
     add_executable(lidl_tests tests/test_lidl.cpp)
-    target_link_libraries(lidl_tests PRIVATE logos_lidl GTest::gtest GTest::gtest_main)
+    target_link_libraries(lidl_tests PRIVATE logos_lidl logos_lidl_c GTest::gtest GTest::gtest_main)
     gtest_discover_tests(lidl_tests)
 endif()

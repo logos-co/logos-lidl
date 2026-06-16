@@ -6,6 +6,26 @@ namespace lidl {
 
 namespace {
 
+// Escape a description for a "..."-delimited LIDL string literal (the lexer
+// decodes \\ \" \n \t). Keeps method/event docs intact across a .lidl
+// round-trip so introspection (lm / getMethods) still shows them. Backslash
+// must be replaced first so the escapes introduced below aren't re-escaped.
+std::string lidlEscapeStr(std::string in)
+{
+    std::string out;
+    out.reserve(in.size());
+    for (char c : in) {
+        switch (c) {
+        case '\\': out += "\\\\"; break;
+        case '"':  out += "\\\""; break;
+        case '\n': out += "\\n"; break;
+        case '\t': out += "\\t"; break;
+        default:   out += c; break;
+        }
+    }
+    return out;
+}
+
 std::string serializeTypeExpr(const TypeExpr& te)
 {
     switch (te.kind) {
@@ -32,7 +52,7 @@ std::string serialize(const ModuleDecl& module)
     std::ostringstream s;
     s << "module " << module.name << " {\n";
     if (!module.version.empty()) s << "  version \"" << module.version << "\"\n";
-    if (!module.description.empty()) s << "  description \"" << module.description << "\"\n";
+    if (!module.description.empty()) s << "  description \"" << lidlEscapeStr(module.description) << "\"\n";
     if (!module.category.empty()) s << "  category \"" << module.category << "\"\n";
     s << "  depends [";
     for (size_t i = 0; i < module.depends.size(); ++i) { s << module.depends[i]; if (i + 1 < module.depends.size()) s << ", "; }
@@ -50,13 +70,17 @@ std::string serialize(const ModuleDecl& module)
     for (const MethodDecl& md : module.methods) {
         s << "  method " << md.name << "(";
         serializeParams(s, md.params);
-        s << ") -> " << serializeTypeExpr(md.returnType) << "\n";
+        s << ") -> " << serializeTypeExpr(md.returnType);
+        if (!md.description.empty()) s << " description \"" << lidlEscapeStr(md.description) << "\"";
+        s << "\n";
     }
     if (!module.events.empty()) s << "\n";
     for (const EventDecl& ed : module.events) {
         s << "  event " << ed.name << "(";
         serializeParams(s, ed.params);
-        s << ")\n";
+        s << ")";
+        if (!ed.description.empty()) s << " description \"" << lidlEscapeStr(ed.description) << "\"";
+        s << "\n";
     }
     s << "}\n";
     return s.str();

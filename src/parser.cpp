@@ -159,6 +159,30 @@ private:
         if (!expect(Token::RParen, "method parameters")) return false;
         if (!expect(Token::Arrow, "method return type")) return false;
         if (!parseTypeExpr(md.returnType)) return false;
+        // Optional trailing doc: `-> ret description "..."`. Carries the
+        // method's doc comment across a .lidl round-trip so introspection
+        // (lm / getMethods) still surfaces it.
+        if (at(Token::Description)) {
+            ++m_pos;
+            if (!at(Token::StringLit)) { error("Expected string after method 'description'"); return false; }
+            md.description = current().text; ++m_pos;
+        }
+        // Restore the return-shape flags from the parsed type so a .lidl
+        // round-trip carries the same semantics the impl-header parser sets
+        // (it derives them from C++ types: StdLogosResult -> result,
+        // LogosMap/LogosList -> json). Without this, a header-first universal
+        // module (header -> .lidl -> cdylib backend) loses the flags and the
+        // cdylib codegen/eligibility mis-handles result / map / list returns.
+        {
+            const TypeExpr& rt = md.returnType;
+            md.resultReturn = (rt.kind == TypeExpr::Primitive && rt.name == "result");
+            md.jsonReturn =
+                rt.kind == TypeExpr::Map
+                || (rt.kind == TypeExpr::Primitive && rt.name == "any")
+                || (rt.kind == TypeExpr::Array && rt.elements.size() == 1
+                    && rt.elements[0].kind == TypeExpr::Primitive
+                    && rt.elements[0].name == "any");
+        }
         mod.methods.push_back(md); return true;
     }
 
@@ -170,6 +194,11 @@ private:
         if (!expect(Token::LParen, "event parameters")) return false;
         if (!parseParams(ed.params)) return false;
         if (!expect(Token::RParen, "event parameters")) return false;
+        if (at(Token::Description)) {
+            ++m_pos;
+            if (!at(Token::StringLit)) { error("Expected string after event 'description'"); return false; }
+            ed.description = current().text; ++m_pos;
+        }
         mod.events.push_back(ed); return true;
     }
 
