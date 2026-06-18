@@ -185,6 +185,13 @@ Result types:
 - `ParseResult { ModuleDecl module; std::string error; int errorLine, errorColumn; bool hasError(); }`
 - `ValidationResult { std::vector<std::string> errors, warnings; bool hasErrors(); }`
 
+> For a runnable, executable version of the examples below — a downstream Nix flake that
+> depends on `logos-lidl`, links it with `find_package(logos-lidl)`, and drives all four
+> operations end to end — see the doc-test
+> [`doctests/using-logos-lidl.test.yaml`](../doctests/using-logos-lidl.test.yaml) (run it
+> with `cd doctests && ./run.sh`). It is exercised in CI against each commit, so these
+> snippets cannot drift from the library.
+
 ### Example: parse, validate, roundtrip
 
 ```cpp
