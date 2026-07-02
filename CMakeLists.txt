@@ -50,6 +50,31 @@ target_include_directories(logos_lidl_c PUBLIC
 )
 install(TARGETS logos_lidl_c ARCHIVE DESTINATION lib)
 
+# logos_lidl_c (shared) — a dlopen-able liblogos_lidl_c.{so,dylib} exposing the
+# same C ABI, for FFI SDKs that load it at runtime (js-sdk via koffi). Compiles
+# the core frontend + C bridge directly so it is self-contained (nlohmann is
+# header-only → no runtime deps beyond libc/libstdc++). CXX visibility is hidden
+# so ONLY the lidl_* functions (marked visibility("default") in lidl_c.h) are
+# exported — a clean C-ABI surface. Static consumers keep using the archives.
+add_library(logos_lidl_c_shared SHARED
+    src/lexer.cpp
+    src/parser.cpp
+    src/serializer.cpp
+    src/validator.cpp
+    src/json.cpp
+    src/lidl_c.cpp
+)
+set_target_properties(logos_lidl_c_shared PROPERTIES
+    OUTPUT_NAME logos_lidl_c
+    CXX_VISIBILITY_PRESET hidden
+    VISIBILITY_INLINES_HIDDEN ON
+)
+target_link_libraries(logos_lidl_c_shared PRIVATE nlohmann_json::nlohmann_json)
+target_include_directories(logos_lidl_c_shared PUBLIC
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+)
+install(TARGETS logos_lidl_c_shared LIBRARY DESTINATION lib RUNTIME DESTINATION bin)
+
 include(CMakePackageConfigHelpers)
 write_basic_package_version_file(
     "${CMAKE_CURRENT_BINARY_DIR}/logos-lidlConfigVersion.cmake"
