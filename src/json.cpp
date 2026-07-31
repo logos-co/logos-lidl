@@ -50,9 +50,24 @@ TypeExpr typeFromJson(const json& j)
     return te;
 }
 
+// Every slot (record field, method/event parameter, method return) carries the
+// frontend's own answer to "may this be empty, and of what" as `isOptional` +
+// `valueType`. These are DERIVED and OUTPUT-ONLY: they exist so no backend
+// re-derives optionality from `optional`/`kind` and the two spellings of an
+// optional field cannot drift apart. moduleFromJson ignores them and rebuilds
+// from `type`/`optional` alone, which is what keeps the wire form
+// round-trip-exact for either spelling.
+void addOptionality(json& j, bool isOptional, const TypeExpr& valueType)
+{
+    j["isOptional"] = isOptional;
+    j["valueType"] = typeToJson(valueType);
+}
+
 json paramToJson(const ParamDecl& p)
 {
-    return json{{"name", p.name}, {"type", typeToJson(p.type)}};
+    json j{{"name", p.name}, {"type", typeToJson(p.type)}};
+    addOptionality(j, paramIsOptional(p), paramValueType(p));
+    return j;
 }
 
 ParamDecl paramFromJson(const json& j)
@@ -80,7 +95,11 @@ std::vector<ParamDecl> paramsFromJson(const json& j)
 
 json fieldToJson(const FieldDecl& f)
 {
-    return json{{"name", f.name}, {"type", typeToJson(f.type)}, {"optional", f.optional}};
+    // `optional` mirrors the raw `? name:` flag exactly (round-trip fidelity);
+    // `isOptional` is the meaning, true for `name: ?T` as well.
+    json j{{"name", f.name}, {"type", typeToJson(f.type)}, {"optional", f.optional}};
+    addOptionality(j, fieldIsOptional(f), fieldValueType(f));
+    return j;
 }
 
 FieldDecl fieldFromJson(const json& j)
@@ -110,10 +129,14 @@ TypeDecl typeDeclFromJson(const json& j)
 
 json methodToJson(const MethodDecl& m)
 {
+    // The return is a positional slot too, so it gets the same derived pair —
+    // spelled on the method because the return type has no wrapper object.
     return json{
         {"name", m.name},
         {"params", paramsToJson(m.params)},
         {"returnType", typeToJson(m.returnType)},
+        {"returnIsOptional", typeIsOptional(m.returnType)},
+        {"returnValueType", typeToJson(optionalValueType(m.returnType))},
         {"description", m.description},
         {"jsonReturn", m.jsonReturn},
         {"resultReturn", m.resultReturn},

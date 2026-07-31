@@ -70,6 +70,10 @@ if(LOGOS_LIDL_BUILD_TESTS)
     find_package(GTest REQUIRED)
     include(GoogleTest)
     add_executable(lidl_tests tests/test_lidl.cpp)
-    target_link_libraries(lidl_tests PRIVATE logos_lidl logos_lidl_c GTest::gtest GTest::gtest_main)
+    # nlohmann is linked into the tests (not just into logos_lidl_c) so the
+    # C-ABI tests can assert on the JSON wire form structurally instead of by
+    # substring — the derived optionality keys are checked field by field.
+    target_link_libraries(lidl_tests PRIVATE logos_lidl logos_lidl_c
+        nlohmann_json::nlohmann_json GTest::gtest GTest::gtest_main)
     gtest_discover_tests(lidl_tests)
 endif()
