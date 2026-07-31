@@ -7,7 +7,16 @@
  * produced by lidl/json.hpp.
  *
  * String ownership: every char* returned by a function below is malloc'd and
- * must be released with lidl_free_string (mirrors the liblogos_core idiom). */
+ * must be released with lidl_free_string (mirrors the liblogos_core idiom).
+ *
+ * Optionality across this boundary: a field can be written `? name: T` or
+ * `name: ?T` and the two mean the same thing, so the JSON carries the
+ * frontend's own reconciliation and a backend must not compute its own.
+ * Read `isOptional` + `valueType` on every field and parameter object, and
+ * `returnIsOptional` + `returnValueType` on every method object. The raw
+ * `optional` flag and `type` are the verbatim spelling, kept only so the wire
+ * form round-trips; do not decide optionality from them. The derived keys are
+ * output-only and are ignored on the way back in. */
 
 #if defined(_WIN32)
 #  define LIDL_C_EXPORT __declspec(dllexport)

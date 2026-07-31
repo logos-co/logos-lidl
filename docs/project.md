@@ -68,7 +68,9 @@ backends and tests can compare contracts structurally.
   `name` holds the primitive or custom type name; `elements` holds the children — for
   `Array`: `[0]` = element type; for `Map`: `[0]` = key, `[1]` = value; for `Optional`:
   `[0]` = inner type. (`Primitive`/`Named` have no elements.)
-- **`FieldDecl`** — a record field: `name`, `type`, `optional` flag.
+- **`FieldDecl`** — a record field: `name`, `type`, `optional` flag. Both members hold
+  the spelling *as written* — `? name: T` sets the flag, `name: ?T` makes the type an
+  `Optional` — so never read either one alone; use the accessors below.
 - **`ParamDecl`** — a parameter: `name`, `type`.
 - **`MethodDecl`** — a method: `name`, `params`, `returnType`, plus three fields that the
   text grammar does **not** populate but backends and richer producers do:
@@ -82,6 +84,26 @@ backends and tests can compare contracts structurally.
 - **`TypeDecl`** — a named record type: `name`, `fields`.
 - **`ModuleDecl`** — the whole contract: `name`, `version`, `description`, `category`,
   `depends[]`, `types[]`, `methods[]`, `events[]`.
+
+#### Optionality accessors (`ast.hpp`)
+
+`?T` is **two-state** — a value of `T`, or empty — and has two equivalent spellings for a
+record field. These free functions are the one place they are reconciled, so no backend
+re-derives optionality and the spellings cannot drift apart (see `docs/spec.md`,
+*Optionality*):
+
+```cpp
+bool             lidl::typeIsOptional(const TypeExpr&);      // kind == Optional
+const TypeExpr&  lidl::optionalValueType(const TypeExpr&);   // ?T -> T, ??T -> T, T -> T
+bool             lidl::fieldIsOptional(const FieldDecl&);    // flag OR optional type
+const TypeExpr&  lidl::fieldValueType(const FieldDecl&);     // value type, ? stripped
+bool             lidl::paramIsOptional(const ParamDecl&);    // positional: type kind only
+const TypeExpr&  lidl::paramValueType(const ParamDecl&);
+```
+
+`optionalValueType` strips *every* leading `Optional` layer — optionality is idempotent
+under the two-state rule, so `??T` must not become a third state — and returns a
+degenerate element-less `Optional` as-is rather than dereferencing it.
 
 > The `description` / `jsonReturn` / `resultReturn` fields exist on the AST so a single
 > IR can carry information richer than the surface syntax (e.g. a C++ impl-header parser
@@ -149,10 +171,14 @@ types are not rejected here but later by the validator.
 ### Validator (`validator.hpp` / `validator.cpp`)
 
 `ValidationResult validate(const ModuleDecl& module)` — never throws; collects all
-problems into `errors` (with a reserved `warnings` channel). Checks: empty module name,
+problems into `errors` and `warnings`. Errors: empty module name,
 duplicate/builtin-shadowing type names, duplicate method names, duplicate event names,
-duplicate parameter names within a method, and unknown named-type references resolved
-recursively through arrays, maps, and optionals.
+duplicate parameter names within a method, unknown named-type references resolved
+recursively through arrays, maps, and optionals (being inside an optional does not exempt
+a type from resolution), and an optional in a **map key** position — a key has no empty
+inhabitant. Warnings, for documents that are valid but risk reading as a third state: a
+field marked optional twice (`? name: ?T`), a redundant nested optional (`??T`), and an
+optional `any` (`any` already admits the empty value).
 
 ### Serializer (`serializer.hpp` / `serializer.cpp`)
 
@@ -162,6 +188,11 @@ recursively through arrays, maps, and optionals.
 render recursively (`[T]`, `{K: V}`, `? T`). Output re-parses to an equal AST and is
 byte-stable on the next serialization (see roundtrip tests). It does **not** emit
 comments, `description`s, or the `jsonReturn`/`resultReturn` flags.
+
+It also does **not** canonicalise between the two spellings of an optional field: `?
+label: tstr` serializes back as `? label: tstr` and `note: ?tstr` as `note: ?tstr`, so a
+contract survives a normalization pass as its author wrote it. (The *wire* encoder
+described in `docs/spec.md` does canonicalise — that is a different layer.)
 
 ## API
 
@@ -177,6 +208,14 @@ lidl::LexResult        lidl::tokenize(const std::string& source);
 lidl::ParseResult      lidl::parse(const std::string& source);   // tokenizes internally
 std::string            lidl::serialize(const lidl::ModuleDecl& module);
 lidl::ValidationResult lidl::validate(const lidl::ModuleDecl& module);
+
+// ast.hpp — optionality, reconciled once for every backend (see above)
+bool                   lidl::typeIsOptional(const lidl::TypeExpr&);
+const lidl::TypeExpr&  lidl::optionalValueType(const lidl::TypeExpr&);
+bool                   lidl::fieldIsOptional(const lidl::FieldDecl&);
+const lidl::TypeExpr&  lidl::fieldValueType(const lidl::FieldDecl&);
+bool                   lidl::paramIsOptional(const lidl::ParamDecl&);
+const lidl::TypeExpr&  lidl::paramValueType(const lidl::ParamDecl&);
 ```
 
 Result types:
@@ -280,6 +319,25 @@ named-type method parameter, and an event):
 | `Validator.CatchesDuplicatesAndUnknownTypes` | Unknown type reference and duplicate method both reported |
 | `Validator.AcceptsCanonicalDocument` | A well-formed document produces no errors |
 
+Optionality (`docs/spec.md`, *Optionality*) is covered by a second group, built around a
+document that says the same field two ways (`? flagged: tstr` and `typed: ?tstr`) plus a
+non-optional control:
+
+| Test | What it checks |
+| ---- | -------------- |
+| `Optional.BothSpellingsParse` | Each spelling lands in the AST as written — neither is normalized into the other |
+| `Optional.AccessorsAgreeAcrossSpellings` | `fieldIsOptional`/`fieldValueType` give one answer for both spellings |
+| `Optional.PositionalSlotsUseTheTypeSpelling` | `paramIsOptional`/`paramValueType` and an optional return type |
+| `Optional.IsIdempotent` | `? x: ?T` and `??T` collapse to one optional layer over `T` (two-state, never three) |
+| `Optional.DegenerateOptionalIsNotDereferenced` | An `Optional` with no element (JSON-bridge reachable) does not walk off the end |
+| `Optional.SerializerPreservesEachSpelling` | Both spellings survive serialize → parse verbatim, AST- and byte-stable |
+| `Validator.AcceptsOptionalsAndKeepsCheckingThem` | Optionals are clean; an unknown type inside one is still an error (×3 slots) |
+| `Validator.RejectsOptionalMapKey` | `{?tstr: int}` is one located error; an optional map *value* is fine |
+| `Validator.WarnsOnRedundantOptionality` | Double-marked field, `??T`, and `?any` (both spellings) warn without erroring |
+| `CAbi.JsonCarriesDerivedOptionality` | `isOptional`/`valueType` on fields and params, `returnIsOptional`/`returnValueType` on methods |
+| `CAbi.DerivedOptionalityIsOutputOnly` | Derived keys are ignored on input, so each spelling survives .lidl → json → .lidl |
+| `CAbi.ValidateJsonReportsOptionalWarnings` | The new errors and warnings cross the C ABI |
+
 ## Relationship to the Logos SDKs
 
 `logos-lidl` is the producer/consumer-neutral core. The full module-binding story lives
@@ -307,6 +365,14 @@ backend's end-to-end pipeline.
 - **`description` / `jsonReturn` / `resultReturn` are not part of the text grammar.** They
   exist on the AST for backends to populate, but `parse()` never sets them and
   `serialize()` never emits them — so they do not survive a text roundtrip.
+- **Optionality is modelled and published, not yet consumed.** The frontend parses `?T`
+  in either spelling, validates it, exposes the reconciled answer through the accessors
+  and the JSON wire form, and `docs/spec.md` makes the wire semantics normative — but as
+  of this change no SDK backend reads any of it. The C++ cdylib generator still rejects a
+  `?T` outright as not cdylib-eligible, the Rust generator emits records with no
+  optionality, and the Qt path flattens every type expression to a type-name string
+  before optionality could be seen. Making a backend honor `?T` (Rust `Option<T>`, C++
+  `std::optional<T>`) is separate, per-SDK work.
 - **No generics, inheritance, or default parameter values.** The language has none.
 - **One module per document.** A `.lidl` file declares exactly one module; content after
   the closing `}` is a parse error.

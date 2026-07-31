@@ -176,13 +176,93 @@ Composite type expressions, which nest arbitrarily:
 
 - `[T]` — **array** of `T` (e.g. `[tstr]`, `[[int]]`).
 - `{K: V}` — **map** from key type `K` to value type `V` (e.g. `{tstr: any}`).
-- `? T` — **optional** `T` — the value may be absent.
+- `? T` — **optional** `T` — the value may be absent. See [Optionality](#optionality).
 - A bare identifier that names a `type` declared in the same module is a **named** type
   reference; any other identifier is treated as a primitive name by the parser and
   rejected later by the validator if it is not a known type.
 
 A field may also be marked optional with a leading `?` before its name
 (`? label: tstr`), which is equivalent in meaning to giving it an optional type.
+
+### Optionality
+
+An **optional slot** is any place a value can be empty: a record field, a method
+parameter, a method return type, or an event parameter. The rules below are normative
+— every SDK backend and every wire encoder must implement exactly this.
+
+#### Cardinality — `?T` is two-state
+
+`?T` has exactly two states: **a value of `T`**, or **empty**. It is never three-state;
+there is no separate "absent" state distinct from "null".
+
+This follows from the project rule that one LIDL type maps to one type per language:
+every target has exactly one empty inhabitant to spell empty with (a Rust `None`, a C++
+`std::nullopt`, an invalid `QVariant`, a JavaScript `undefined`), so a backend maps `?T`
+onto its single optional-of-`T` type and there is nowhere for a third state to live.
+
+Two consequences:
+
+- Optionality is **idempotent**: `??T` denotes the same two states as `?T`. It is
+  accepted and collapsed, with a validation warning — never treated as a third state.
+- `?any` is **redundant**: `any` already admits the empty value, so wrapping it adds no
+  state and only invites a backend to spell a three-state type. It warns; write `any`.
+
+#### The two spellings are one meaning
+
+A record field may be marked optional in two ways:
+
+```
+type Account {
+    ? label: tstr          ; field flag
+      note:  ?tstr         ; optional type
+}
+```
+
+They are **identical in meaning** and MUST produce byte-identical generated code. A
+backend reads both and emits one. It does not compute this itself: the frontend exposes
+`fieldIsOptional(f)` (true for either spelling) and `fieldValueType(f)` (the value type
+with optionality stripped), and the JSON wire form carries the same answer as
+`isOptional` + `valueType` on every field and parameter, and `returnIsOptional` +
+`returnValueType` on every method. Those are the only correct source of the answer; the
+raw `optional` flag and the type kind are the verbatim spelling, kept so the document
+round-trips, and reading either one alone is a bug.
+
+A positional slot — a method parameter, a return type, an event parameter — has no name
+to put a flag in front of, so it has only the type-kind spelling (`x: ?tstr`).
+
+#### Wire semantics
+
+An omitted key and an explicit `null` are the **same state on decode** and **different
+states on encode**.
+
+**Decode is liberal.** In an optional slot, both an absent key and an explicit `null`
+decode to empty. In a **required** slot both remain errors, exactly as before —
+optionality is what changes this, nothing else does.
+
+**Encode is canonical — one spelling per slot.** Empty is written:
+
+| Slot | Empty is encoded as | Why |
+| ---- | ------------------- | --- |
+| Record field (**named** slot) | the key is **omitted** | a named slot can be left out |
+| Method parameter, return type, event parameter (**positional** slot) | `null` | a positional slot has no key to omit, and **arity must never change** |
+
+A round trip is therefore **canonicalising, not identity**: a record decoded from
+`{"label": null}` re-encodes as `{}`. Both denote the same single empty state, so no
+information is lost — but a byte-for-byte comparison of the two encodings is not a
+correctness test.
+
+#### Optional does not weaken type checking
+
+A **present but wrongly-typed** value in an optional slot is still an error. `?T` widens
+the domain by exactly one inhabitant — empty — and does nothing else: a `?tstr` given
+`42` fails to decode just as a `tstr` given `42` does, and a `?Foo` naming an undeclared
+type is an error just as `Foo` is.
+
+#### Where optional is not allowed
+
+Optional is rejected in a **map key** position (`{?tstr: int}`). A key has no empty
+inhabitant: an absent key is not an entry whose key is empty, it is the absence of the
+entry, so there is nothing for `?K` to denote.
 
 ### Reserved words are only structurally reserved
 
@@ -208,11 +288,22 @@ contract-level rules a backend can rely on. A module is valid when:
 - No two parameters within the same method share a name.
 - Every named type referenced anywhere (a field, parameter, or return type, at any
   nesting depth inside arrays/maps/optionals) resolves to a `type` declared in the
-  module.
+  module. Being inside an optional does not exempt a type from this — optionality
+  widens the domain by one inhabitant, it does not switch off type checking.
+- No optional appears in a **map key** position (`{?tstr: int}`): a key has no empty
+  inhabitant.
 
-Validation returns a list of `errors` (and a reserved channel for `warnings`); it never
-throws. A document can parse cleanly yet fail validation — e.g. referencing an undefined
-type, or declaring a method twice.
+Validation also reports non-fatal `warnings`, for documents that are valid but say
+something in a way that risks being read as a third state:
+
+- A field marked optional **twice** (`? name: ?T`) — the two spellings are equivalent,
+  so one suffices.
+- A **redundant nested optional** (`??T`) — it denotes the same two states as `?T`, and
+  is collapsed.
+- An **optional `any`** (`?any`) — `any` already admits the empty value.
+
+Validation returns both channels; it never throws. A document can parse cleanly yet fail
+validation — e.g. referencing an undefined type, or declaring a method twice.
 
 ## Workflows
 
@@ -241,6 +332,14 @@ guarantees:
 This makes serialization usable for normalizing hand-written `.lidl`, for diffing
 contracts, and as the reference oracle in roundtrip tests.
 
+**Serialization preserves the spelling of an optional.** A field written `? label: tstr`
+serializes back as `? label: tstr`, and one written `note: ?tstr` as `note: ?tstr` — the
+serializer never rewrites one into the other, so a contract survives a normalization pass
+as its author wrote it. This is deliberately the opposite of the *wire* encoder, which
+does canonicalise (see [Wire semantics](#wire-semantics)): the two spellings are one
+meaning, so a backend must not care which it sees, and the frontend's optionality
+accessors are how it avoids caring.
+
 ## Functional Requirements
 
 - **FR-1 — Lexing.** Convert `.lidl` source into a token stream covering the eight
@@ -255,10 +354,16 @@ contracts, and as the reference oracle in roundtrip tests.
   nested array / map / optional / named / primitive type expressions. Reject trailing
   content after the module's closing brace. Honor the structurally-reserved-keyword rule.
   Report the first error with line and column.
-- **FR-3 — Validation.** Given a `ModuleDecl`, return all semantic errors per the rules
-  in *Semantic rules* above, without throwing.
+- **FR-3 — Validation.** Given a `ModuleDecl`, return all semantic errors and warnings
+  per the rules in *Semantic rules* above, without throwing.
 - **FR-4 — Serialization.** Render a `ModuleDecl` to canonical `.lidl` text that
   re-parses to an equal model and is byte-stable on subsequent serialization.
+- **FR-4b — Optionality accessors.** Expose the reconciliation of the two optional
+  spellings as part of the frontend's public surface — `fieldIsOptional(f)` /
+  `fieldValueType(f)` on the AST, and the derived `isOptional` / `valueType` (and
+  `returnIsOptional` / `returnValueType`) keys on the JSON wire form reached through the
+  C ABI — so no backend re-derives optionality and the two spellings cannot drift apart.
+  Serialization must nonetheless preserve the spelling as written.
 - **FR-5 — Language neutrality.** Contain no target-language type mapping and no code
   generation. The frontend's outputs (token stream, AST, serialized text, validation
   result) are the entire public surface; all binding generation lives in per-SDK
