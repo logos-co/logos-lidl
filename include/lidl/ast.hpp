@@ -115,11 +115,20 @@ struct MethodDecl {
     bool jsonReturn = false;
     // True when the impl returns StdLogosResult.
     bool resultReturn = false;
+    // True when the frontend added this method rather than the author writing
+    // it -- see lidl/identity.hpp. A derived method is part of the contract a
+    // backend generates code for, but NOT part of the .lidl text: serialize()
+    // omits it, so the published artifact stays exactly what the author wrote
+    // and cannot drift from it. Backends emit a body for a derived method
+    // instead of delegating to the module's impl class, which has no such
+    // member.
+    bool derived = false;
 
     bool operator==(const MethodDecl& o) const {
         return name == o.name && params == o.params && returnType == o.returnType
             && description == o.description
-            && jsonReturn == o.jsonReturn && resultReturn == o.resultReturn;
+            && jsonReturn == o.jsonReturn && resultReturn == o.resultReturn
+            && derived == o.derived;
     }
 };
 

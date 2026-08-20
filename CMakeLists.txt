@@ -10,6 +10,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 # (C++, Rust, ...) generates bindings from.
 
 add_library(logos_lidl STATIC
+    src/identity.cpp
     src/lexer.cpp
     src/parser.cpp
     src/serializer.cpp
