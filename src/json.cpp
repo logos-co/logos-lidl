@@ -140,6 +140,7 @@ json methodToJson(const MethodDecl& m)
         {"description", m.description},
         {"jsonReturn", m.jsonReturn},
         {"resultReturn", m.resultReturn},
+        {"derived", m.derived},
     };
 }
 
@@ -152,6 +153,7 @@ MethodDecl methodFromJson(const json& j)
     m.description = j.value("description", "");
     m.jsonReturn = j.value("jsonReturn", false);
     m.resultReturn = j.value("resultReturn", false);
+    m.derived = j.value("derived", false);
     return m;
 }
 

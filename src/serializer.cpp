@@ -66,8 +66,16 @@ std::string serialize(const ModuleDecl& module)
         }
         s << "  }\n";
     }
-    if (!module.methods.empty()) s << "\n";
+    // Derived methods (lidl/identity.hpp) are contract for code generation but
+    // not text: the .lidl a module publishes stays exactly what its author
+    // wrote. Skipping them here rather than at each call site means no caller
+    // can leak one into an artifact by injecting before serializing.
+    bool anyAuthored = false;
+    for (const MethodDecl& md : module.methods)
+        if (!md.derived) { anyAuthored = true; break; }
+    if (anyAuthored) s << "\n";
     for (const MethodDecl& md : module.methods) {
+        if (md.derived) continue;
         s << "  method " << md.name << "(";
         serializeParams(s, md.params);
         s << ") -> " << serializeTypeExpr(md.returnType);

@@ -1,5 +1,6 @@
 #include "lidl/lidl_c.h"
 
+#include "lidl/identity.hpp"
 #include "lidl/json.hpp"
 #include "lidl/parser.hpp"
 #include "lidl/serializer.hpp"
@@ -72,6 +73,21 @@ char* lidl_validate_json(const char* json)
         out["warnings"] = vr.warnings;
         return dupString(out.dump());
     } catch (const std::exception&) {
+        return nullptr;
+    }
+}
+
+char* lidl_inject_identity_json(const char* json, char** err)
+{
+    if (err) *err = nullptr;
+    if (!json) { setErr(err, "null input"); return nullptr; }
+    try {
+        lidl::ModuleDecl module = lidl::moduleFromJson(json);
+        const lidl::IdentityInjection r = lidl::injectIdentityMethods(module);
+        if (r.hasError()) { setErr(err, r.error); return nullptr; }
+        return dupString(lidl::toJson(module));
+    } catch (const std::exception& e) {
+        setErr(err, std::string("invalid JSON AST: ") + e.what());
         return nullptr;
     }
 }

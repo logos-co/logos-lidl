@@ -43,6 +43,20 @@ LIDL_C_EXPORT char* lidl_serialize_from_json(const char* json, char** err);
  * {"errors":[...],"warnings":[...]}, or NULL if the input JSON is malformed. */
 LIDL_C_EXPORT char* lidl_validate_json(const char* json);
 
+/* Append the derived module identity methods -- name() and version() -- to a
+ * JSON AST, returning the augmented JSON. See lidl/identity.hpp for why this
+ * is a separate pass rather than part of parsing.
+ *
+ * Every backend runs this on each module it handles, on both the provider and
+ * the consumer side. It is exposed here so a non-C++ SDK runs the SAME pass
+ * rather than a reimplementation that could disagree about, say, whether an
+ * author's own name() counts.
+ *
+ * Success: returns malloc'd JSON; *err set to NULL.
+ * Failure: returns NULL and sets *err -- malformed input JSON, or the module
+ *          declares a reserved identity name with an incompatible signature. */
+LIDL_C_EXPORT char* lidl_inject_identity_json(const char* json, char** err);
+
 /* Release a string returned by any function above. NULL is a no-op. */
 LIDL_C_EXPORT void lidl_free_string(char* s);
 
