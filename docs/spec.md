@@ -116,8 +116,12 @@ human-readable message plus the 1-based line and column where the problem was fo
 
 A LIDL document declares exactly one module. The contract has four parts:
 
-1. **Metadata** — `version`, `description`, `category`, and a `depends` list of other
-   module names. All optional; order-independent; each may appear in the body.
+1. **Metadata** — `version`, `description`, `category`, and two lists of other module
+   names: `depends` and `optional_depends`. All optional; order-independent; each may
+   appear in the body. The two dependency lists are kept apart because they differ in
+   LIFETIME — nothing loads an optional dependency, and its absence is not an error —
+   which a single list cannot express. `optional_depends` is emitted only when
+   non-empty, so a contract written before it existed serialises unchanged.
 2. **Types** — named record types (`type Name { … }`) with typed, optionally-marked
    fields. These are the structured payloads methods and events exchange.
 3. **Methods** — the call-half of the API: a name, a parameter list, and a return type.
@@ -267,7 +271,8 @@ entry, so there is nothing for `?K` to denote.
 ### Reserved words are only structurally reserved
 
 The keywords `module`, `type`, `method`, `event`, `version`, `description`,
-`category`, and `depends` are reserved **only at the start of a declaration**. In a
+`category`, `depends`, and `optional_depends` are reserved **only at the start of a
+declaration**. In a
 *name position* — a module name, type name, method name, parameter name, event name, or
 an entry in a `depends` list — they are ordinary identifiers. This is a deliberate
 property of the grammar: a module may legitimately be named `module`, a method named

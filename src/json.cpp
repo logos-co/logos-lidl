@@ -192,6 +192,7 @@ std::string toJson(const ModuleDecl& module, bool pretty)
         {"description", module.description},
         {"category", module.category},
         {"depends", module.depends},
+        {"optional_depends", module.optional_depends},
         {"types", types},
         {"methods", methods},
         {"events", events},
@@ -209,6 +210,8 @@ ModuleDecl moduleFromJson(const std::string& jsonText)
     m.category = j.value("category", "");
     if (j.contains("depends"))
         m.depends = j.at("depends").get<std::vector<std::string>>();
+    if (j.contains("optional_depends"))
+        m.optional_depends = j.at("optional_depends").get<std::vector<std::string>>();
     if (j.contains("types"))
         for (const json& t : j.at("types")) m.types.push_back(typeDeclFromJson(t));
     if (j.contains("methods"))

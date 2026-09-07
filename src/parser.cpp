@@ -73,6 +73,7 @@ private:
         case Token::Method: return "'method'"; case Token::Event: return "'event'";
         case Token::Version: return "'version'"; case Token::Description: return "'description'";
         case Token::Category: return "'category'"; case Token::Depends: return "'depends'";
+        case Token::OptionalDepends: return "'optional_depends'";
         case Token::Ident: return "identifier"; case Token::StringLit: return "string literal";
         case Token::LBrace: return "'{'"; case Token::RBrace: return "'}'";
         case Token::LParen: return "'('"; case Token::RParen: return "')'";
@@ -98,7 +99,8 @@ private:
     bool parseModuleBody(ModuleDecl& mod) {
         while (!at(Token::RBrace) && !at(Token::Eof)) {
             switch (current().type) {
-            case Token::Version: case Token::Description: case Token::Category: case Token::Depends:
+            case Token::Version: case Token::Description: case Token::Category:
+            case Token::Depends: case Token::OptionalDepends:
                 if (!parseMetadata(mod)) return false; break;
             case Token::TypeKw: if (!parseTypeDef(mod)) return false; break;
             case Token::Method: if (!parseMethodDef(mod)) return false; break;
@@ -109,24 +111,25 @@ private:
         return true;
     }
 
+    bool parseNameList(std::vector<std::string>& out, const char* what) {
+        if (!expect(Token::LBracket, what)) return false;
+        if (!at(Token::RBracket)) {
+            if (!atName()) { error(std::string("Expected identifier in ") + what); return false; }
+            out.push_back(current().text); ++m_pos;
+            while (consume(Token::Comma)) {
+                if (!atName()) { error(std::string("Expected identifier after ',' in ") + what); return false; }
+                out.push_back(current().text); ++m_pos;
+            }
+        }
+        return expect(Token::RBracket, what);
+    }
+
     bool parseMetadata(ModuleDecl& mod) {
         if (at(Token::Version)) { ++m_pos; if (!at(Token::StringLit)) { error("Expected string after 'version'"); return false; } mod.version = current().text; ++m_pos; return true; }
         if (at(Token::Description)) { ++m_pos; if (!at(Token::StringLit)) { error("Expected string after 'description'"); return false; } mod.description = current().text; ++m_pos; return true; }
         if (at(Token::Category)) { ++m_pos; if (!at(Token::StringLit)) { error("Expected string after 'category'"); return false; } mod.category = current().text; ++m_pos; return true; }
-        if (at(Token::Depends)) {
-            ++m_pos;
-            if (!expect(Token::LBracket, "depends list")) return false;
-            if (!at(Token::RBracket)) {
-                if (!atName()) { error("Expected identifier in depends list"); return false; }
-                mod.depends.push_back(current().text); ++m_pos;
-                while (consume(Token::Comma)) {
-                    if (!atName()) { error("Expected identifier after ',' in depends list"); return false; }
-                    mod.depends.push_back(current().text); ++m_pos;
-                }
-            }
-            if (!expect(Token::RBracket, "depends list")) return false;
-            return true;
-        }
+        if (at(Token::Depends)) { ++m_pos; return parseNameList(mod.depends, "depends list"); }
+        if (at(Token::OptionalDepends)) { ++m_pos; return parseNameList(mod.optional_depends, "optional_depends list"); }
         error("Expected metadata keyword"); return false;
     }
 

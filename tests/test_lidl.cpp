@@ -140,6 +140,62 @@ TEST(RoundTrip, SerializeParseStable)
     EXPECT_EQ(text1, serialize(pr2.module));
 }
 
+TEST(OptionalDepends, ParsesAsItsOwnList)
+{
+    auto pr = parse(
+        "module m {\n"
+        "  depends [hard_dep]\n"
+        "  optional_depends [soft_dep, other_soft]\n"
+        "  method f() -> int\n"
+        "}\n");
+    ASSERT_FALSE(pr.hasError()) << pr.error;
+    // Kept apart, in both directions: an optional dependency is never loaded
+    // and its absence is never an error, so folding the lists would make one
+    // required on the way back out.
+    EXPECT_EQ(pr.module.depends, (std::vector<std::string>{"hard_dep"}));
+    EXPECT_EQ(pr.module.optional_depends,
+              (std::vector<std::string>{"soft_dep", "other_soft"}));
+}
+
+TEST(OptionalDepends, AbsentWhenEmptySoOldContractsAreByteStable)
+{
+    auto pr = parse("module m {\n  depends [hard_dep]\n  method f() -> int\n}\n");
+    ASSERT_FALSE(pr.hasError()) << pr.error;
+    EXPECT_TRUE(pr.module.optional_depends.empty());
+    // A contract written before this keyword existed still serialises without
+    // it — so an older parser keeps reading what this one writes.
+    EXPECT_EQ(serialize(pr.module).find("optional_depends"), std::string::npos);
+}
+
+TEST(OptionalDepends, SurvivesSerializeAndJson)
+{
+    const char* doc =
+        "module m {\n"
+        "  depends [hard_dep]\n"
+        "  optional_depends [soft_dep]\n"
+        "  method f() -> int\n"
+        "}\n";
+    auto pr = parse(doc);
+    ASSERT_FALSE(pr.hasError()) << pr.error;
+
+    auto pr2 = parse(serialize(pr.module));
+    ASSERT_FALSE(pr2.hasError()) << pr2.error;
+    EXPECT_EQ(pr.module, pr2.module);
+
+    char* err = nullptr;
+    char* json = lidl_parse_to_json(doc, &err);
+    ASSERT_NE(json, nullptr) << (err ? err : "(no error)");
+    EXPECT_NE(std::string(json).find("\"optional_depends\":[\"soft_dep\"]"), std::string::npos);
+
+    char* back = lidl_serialize_from_json(json, &err);
+    ASSERT_NE(back, nullptr) << (err ? err : "(no error)");
+    auto pr3 = parse(back);
+    ASSERT_FALSE(pr3.hasError()) << pr3.error;
+    EXPECT_EQ(pr3.module.optional_depends, (std::vector<std::string>{"soft_dep"}));
+    lidl_free_string(json);
+    lidl_free_string(back);
+}
+
 TEST(RoundTrip, OptionalAndNestedTypes)
 {
     ModuleDecl m;

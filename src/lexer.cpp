@@ -28,6 +28,7 @@ const std::unordered_map<std::string, Token::Type>& keywords()
         {"description", Token::Description},
         {"category",    Token::Category},
         {"depends",     Token::Depends},
+        {"optional_depends", Token::OptionalDepends},
     };
     return kw;
 }
