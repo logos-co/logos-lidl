@@ -57,6 +57,13 @@ std::string serialize(const ModuleDecl& module)
     s << "  depends [";
     for (size_t i = 0; i < module.depends.size(); ++i) { s << module.depends[i]; if (i + 1 < module.depends.size()) s << ", "; }
     s << "]\n";
+    // Emitted only when there are any, so every contract written before this
+    // existed still serialises byte-for-byte, and an older parser still reads it.
+    if (!module.optional_depends.empty()) {
+        s << "  optional_depends [";
+        for (size_t i = 0; i < module.optional_depends.size(); ++i) { s << module.optional_depends[i]; if (i + 1 < module.optional_depends.size()) s << ", "; }
+        s << "]\n";
+    }
     for (const TypeDecl& td : module.types) {
         s << "\n  type " << td.name << " {\n";
         for (const FieldDecl& fd : td.fields) {

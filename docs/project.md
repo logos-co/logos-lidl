@@ -83,7 +83,7 @@ backends and tests can compare contracts structurally.
   methods).
 - **`TypeDecl`** — a named record type: `name`, `fields`.
 - **`ModuleDecl`** — the whole contract: `name`, `version`, `description`, `category`,
-  `depends[]`, `types[]`, `methods[]`, `events[]`.
+  `depends[]`, `optional_depends[]`, `types[]`, `methods[]`, `events[]`.
 
 #### Optionality accessors (`ast.hpp`)
 
@@ -150,6 +150,7 @@ module     = "module" NAME "{" body "}" EOF
 body       = (metadata | type_def | method_def | event_def)*
 metadata   = "version" STRING | "description" STRING | "category" STRING
            | "depends" "[" (NAME ("," NAME)*)? "]"
+           | "optional_depends" "[" (NAME ("," NAME)*)? "]"
 type_def   = "type" NAME "{" field* "}"
 field      = "?"? NAME ":" type_expr
 method_def = "method" NAME "(" params ")" "->" type_expr

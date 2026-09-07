@@ -10,7 +10,7 @@ struct Token {
     enum Type {
         // Keywords
         Module, TypeKw, Method, Event,
-        Version, Description, Category, Depends,
+        Version, Description, Category, Depends, OptionalDepends,
         // Literals
         Ident, StringLit,
         // Symbols

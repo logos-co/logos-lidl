@@ -157,6 +157,11 @@ struct ModuleDecl {
     std::string description;
     std::string category;
     std::vector<std::string> depends;
+    // Concrete dependencies that may be absent at runtime. A separate list
+    // because the two differ in LIFETIME: nothing loads an optional one, and
+    // its absence is not an error. Folded into `depends` they would become
+    // required on the way back out.
+    std::vector<std::string> optional_depends;
     std::vector<TypeDecl> types;
     std::vector<MethodDecl> methods;
     std::vector<EventDecl> events;
@@ -164,7 +169,8 @@ struct ModuleDecl {
     bool operator==(const ModuleDecl& o) const {
         return name == o.name && version == o.version
             && description == o.description && category == o.category
-            && depends == o.depends && types == o.types
+            && depends == o.depends && optional_depends == o.optional_depends
+            && types == o.types
             && methods == o.methods && events == o.events;
     }
 };
