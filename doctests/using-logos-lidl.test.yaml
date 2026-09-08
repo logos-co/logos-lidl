@@ -1,0 +1,380 @@
+name: "Using logos-lidl: parse, validate, and serialize a module contract"
+output: using-logos-lidl.md
+project_name: lidl-tour
+release: ""
+
+intro: |
+  `logos-lidl` is the **language-neutral frontend** for LIDL, the Logos Interface
+  Definition Language. A module publishes its public contract — identity, record
+  types, methods, and events — as a `.lidl` text artifact, and that artifact is the
+  **cross-language interchange** of the Logos module system: each SDK ships a codegen
+  backend that reads `.lidl` and emits native bindings (typed callers, event
+  subscribers, provider dispatch) for its language. A consumer can generate everything
+  it needs to call a module from that module's `.lidl` alone — without building the
+  module or sharing any source.
+
+  This library is the part every backend builds on. It is pure standard C++17 with
+  **zero dependencies**, and exposes exactly four operations over the `lidl::ModuleDecl`
+  AST:
+
+  - **`tokenize`** — `.lidl` text → a token stream.
+  - **`parse`** — `.lidl` text → a `ModuleDecl` AST (it tokenizes for you).
+  - **`validate`** — semantic checks over a `ModuleDecl`.
+  - **`serialize`** — a `ModuleDecl` → canonical, byte-stable `.lidl` text.
+
+  It deliberately contains **no code generation** and **no type mapping** — those live
+  in each SDK's backend (`logos-cpp-generator`, `logos-rust-sdk`, …). This doc-test
+  builds a tiny downstream C++ program that depends on `logos-lidl` through its Nix
+  flake and CMake package, and drives all four operations end to end against **this**
+  commit of the library.
+
+what_you_build: |
+  A small `lidl-tour` project — its own Nix flake that takes `logos-lidl` as an input,
+  a `CMakeLists.txt` that finds it with `find_package(logos-lidl)`, and three short
+  programs that tokenize/parse/validate/serialize a contract, build a contract in code,
+  and handle malformed input.
+
+what_you_learn:
+  - How to depend on `logos-lidl` from a downstream Nix flake and link it with CMake
+  - The full text → AST → text pipeline: `tokenize`, `parse`, `validate`, `serialize`
+  - That `parse` → `serialize` → `parse` is AST-stable and byte-stable (canonical form)
+  - How to build a `ModuleDecl` in code and emit `.lidl` from it
+  - That failures are returned as data (located parse errors, accumulated validation errors), never thrown
+
+prerequisites:
+  - |
+    **Nix** with flakes enabled. Install from [nixos.org](https://nixos.org/download.html), then enable flakes:
+
+    ```bash
+    mkdir -p ~/.config/nix
+    echo 'experimental-features = nix-command flakes' >> ~/.config/nix/nix.conf
+    ```
+
+    Verify: `nix flake --help >/dev/null 2>&1 && echo "Flakes enabled"`
+  - "**A Linux or macOS machine.** Nix provides the C++ toolchain (CMake, Ninja, a compiler) during the build."
+
+sections:
+  - title: "Create the consumer project"
+    step: true
+    text: |
+      Everything here lives in one small project that consumes `logos-lidl`. Create its
+      directory and source folder.
+    steps:
+      - run: "mkdir -p lidl-tour/src && cd lidl-tour"
+        code_block: "mkdir -p lidl-tour/src && cd lidl-tour"
+
+      - title: "flake.nix — take logos-lidl as an input"
+        text: |
+          The flake has a single real input, `logos-lidl`, and follows **its** pinned
+          `nixpkgs` so the consumer and the library are built against the exact same Qt-free
+          standard toolchain. The package is an ordinary `stdenv` C++ build that puts
+          `logos-lidl` on `buildInputs`.
+        file:
+          path: flake.nix
+          language: nix
+          content: |
+            {
+              description = "lidl-tour - a downstream consumer of the logos-lidl frontend";
+
+              inputs.logos-lidl.url = "github:logos-co/logos-lidl{release}";
+              inputs.nixpkgs.follows = "logos-lidl/nixpkgs";
+
+              outputs = { self, nixpkgs, logos-lidl }:
+                let
+                  systems = [ "aarch64-darwin" "x86_64-darwin" "aarch64-linux" "x86_64-linux" ];
+                  forAllSystems = f: nixpkgs.lib.genAttrs systems
+                    (system: f { pkgs = import nixpkgs { inherit system; }; inherit system; });
+                in
+                {
+                  packages = forAllSystems ({ pkgs, system }: {
+                    default = pkgs.stdenv.mkDerivation {
+                      pname = "lidl-tour";
+                      version = "0.1.0";
+                      src = ./.;
+                      nativeBuildInputs = [ pkgs.cmake pkgs.ninja ];
+                      # logos-lidl ships a static lib + a CMake package config.
+                      buildInputs = [ logos-lidl.packages.${system}.logos-lidl ];
+                      cmakeFlags = [ "-GNinja" ];
+                    };
+                  });
+                };
+            }
+
+      - title: "CMakeLists.txt — find and link logos-lidl"
+        text: |
+          `logos-lidl` installs a CMake package config, so a downstream build just
+          `find_package`s it and links the imported target `logos-lidl::logos_lidl`. The
+          public headers (`lidl/lexer.hpp`, `lidl/parser.hpp`, …) come with the target — no
+          manual include paths.
+        file:
+          path: CMakeLists.txt
+          language: cmake
+          content: |
+            cmake_minimum_required(VERSION 3.14)
+            project(LidlTour LANGUAGES CXX)
+
+            set(CMAKE_CXX_STANDARD 17)
+            set(CMAKE_CXX_STANDARD_REQUIRED ON)
+
+            # logos-lidl ships lib/cmake/logos-lidl/logos-lidlConfig.cmake.
+            find_package(logos-lidl REQUIRED)
+
+            # Three independent demos, each linking the same imported target.
+            foreach(demo pipeline build_in_code handle_errors)
+                add_executable(${demo} src/${demo}.cpp)
+                target_link_libraries(${demo} PRIVATE logos-lidl::logos_lidl)
+                install(TARGETS ${demo} RUNTIME DESTINATION bin)
+            endforeach()
+
+  - title: "The full pipeline: tokenize → parse → validate → serialize"
+    step: true
+    text: |
+      The main demo runs all four operations over one module contract written as `.lidl`
+      text. Each operation returns a small result struct that carries either the value or a
+      diagnostic — no exceptions. The last step proves the canonical-form guarantee:
+      re-serializing the re-parsed output is byte-for-byte identical.
+    steps:
+      - file:
+          path: src/pipeline.cpp
+          language: cpp
+          content: |
+            // Drive logos-lidl's four operations end to end over one .lidl document.
+            #include "lidl/lexer.hpp"
+            #include "lidl/parser.hpp"
+            #include "lidl/validator.hpp"
+            #include "lidl/serializer.hpp"
+
+            #include <iostream>
+
+            int main() {
+                // A module contract as .lidl text — the cross-language interchange artifact.
+                // Primitive type names (tstr, uint, result, ...) are CDDL-flavored; `?` marks
+                // an optional field, `[T]` an array, `{K: V}` a map.
+                const std::string src = R"(module wallet_module {
+              version "1.0.0"
+              description "Key custody and balances"
+              category "finance"
+              depends [crypto_module]
+
+              type Account {
+                address: tstr
+                balance: uint
+                ? label: tstr
+                tags: [tstr]
+              }
+
+              method getBalance(address: tstr) -> uint
+              method transfer(from: tstr, to: tstr, amount: uint) -> result
+
+              event onTransfer(from: tstr, to: tstr, amount: uint)
+            }
+            )";
+
+                // 1. tokenize() — text to a token stream (errors carry a 1-based line/column).
+                lidl::LexResult lex = lidl::tokenize(src);
+                if (lex.hasError()) {
+                    std::cerr << "lex error " << lex.errorLine << ":" << lex.errorColumn
+                              << " - " << lex.error << "\n";
+                    return 1;
+                }
+                std::cout << "tokens: " << lex.tokens.size() << "\n";
+
+                // 2. parse() — token stream to a ModuleDecl AST (runs tokenize() for you).
+                lidl::ParseResult pr = lidl::parse(src);
+                if (pr.hasError()) {
+                    std::cerr << "parse error " << pr.errorLine << ":" << pr.errorColumn
+                              << " - " << pr.error << "\n";
+                    return 1;
+                }
+                const lidl::ModuleDecl& m = pr.module;
+                std::cout << "module: " << m.name << " v" << m.version << "\n";
+                std::cout << "types: " << m.types.size()
+                          << ", methods: " << m.methods.size()
+                          << ", events: " << m.events.size() << "\n";
+
+                // 3. validate() — semantic checks over the AST; never throws, collects all problems.
+                lidl::ValidationResult vr = lidl::validate(m);
+                for (const std::string& w : vr.warnings) std::cout << "warning: " << w << "\n";
+                for (const std::string& e : vr.errors)   std::cerr << "error: " << e << "\n";
+                if (vr.hasErrors()) return 1;
+                std::cout << "valid: yes\n";
+
+                // 4. serialize() — AST back to canonical .lidl text. Re-parsing and
+                //    re-serializing yields identical bytes: the form is canonical.
+                std::string out = lidl::serialize(m);
+                bool stable = lidl::serialize(lidl::parse(out).module) == out;
+                std::cout << "roundtrip stable: " << (stable ? "yes" : "no") << "\n";
+
+                std::cout << "--- canonical .lidl ---\n" << out;
+                return 0;
+            }
+
+  - title: "Build a contract in code"
+    step: true
+    text: |
+      The AST is also a producer surface: a backend (or a tool that reads an
+      implementation) can assemble a `ModuleDecl` directly and `serialize()` it to `.lidl`.
+      `TypeExpr` is the recursive type model — here just two `int` primitives.
+    steps:
+      - file:
+          path: src/build_in_code.cpp
+          language: cpp
+          content: |
+            // Assemble a ModuleDecl by hand and emit .lidl from it — the producer direction.
+            #include "lidl/ast.hpp"
+            #include "lidl/serializer.hpp"
+
+            #include <iostream>
+
+            int main() {
+                using namespace lidl;
+
+                ModuleDecl m;
+                m.name = "counter_module";
+                m.version = "0.1.0";
+
+                // method increment(by: int) -> int
+                MethodDecl inc;
+                inc.name = "increment";
+                inc.params.push_back(ParamDecl{ "by", TypeExpr{ TypeExpr::Primitive, "int", {} } });
+                inc.returnType = TypeExpr{ TypeExpr::Primitive, "int", {} };
+                m.methods.push_back(inc);
+
+                // event ticked(value: int)
+                EventDecl ev;
+                ev.name = "ticked";
+                ev.params.push_back(ParamDecl{ "value", TypeExpr{ TypeExpr::Primitive, "int", {} } });
+                m.events.push_back(ev);
+
+                std::cout << serialize(m);
+                return 0;
+            }
+
+  - title: "Errors are data, not exceptions"
+    step: true
+    text: |
+      Both failure paths return diagnostics instead of throwing. `parse()` stops at the
+      first syntax error and reports its 1-based line/column; `validate()` walks the whole
+      AST and **accumulates** every semantic problem (here: an unknown type reference and a
+      duplicate method).
+    steps:
+      - file:
+          path: src/handle_errors.cpp
+          language: cpp
+          content: |
+            // logos-lidl reports failures as data: a located parse error, and every
+            // semantic problem collected by the validator.
+            #include "lidl/parser.hpp"
+            #include "lidl/validator.hpp"
+
+            #include <iostream>
+
+            int main() {
+                // A syntax error — parse() stops at the first problem and locates it.
+                lidl::ParseResult bad = lidl::parse("module m {\n  method broken( -> int\n}\n");
+                if (bad.hasError())
+                    std::cout << "parse error at " << bad.errorLine << ":" << bad.errorColumn
+                              << " - " << bad.error << "\n";
+
+                // A well-formed-but-invalid module — validate() collects all of its errors.
+                lidl::ParseResult pr = lidl::parse(
+                    "module m {\n"
+                    "  depends []\n"
+                    "  method f(a: Unknown) -> int\n"
+                    "  method f() -> int\n"
+                    "}\n");
+                lidl::ValidationResult vr = lidl::validate(pr.module);
+                std::cout << "validation errors: " << vr.errors.size() << "\n";
+                for (const std::string& e : vr.errors) std::cout << "  - " << e << "\n";
+                return 0;
+            }
+
+  - title: "Build it"
+    step: true
+    text: |
+      Nix flakes only see git-tracked files, so initialize a repo and stage everything
+      before locking and building. `nix flake update` resolves the `logos-lidl` input (the
+      commit under test in CI) and writes `flake.lock`; the single `nix build` compiles all
+      three demos against it.
+    steps:
+      - title: "Ignore build outputs"
+        file:
+          path: .gitignore
+          language: text
+          content: |
+            result
+            result-*
+            build/
+      - run: "git init -q"
+      - run: "git add -A"
+      - run: "nix flake update"
+        post_text: "This locks the `logos-lidl` input; stage the resulting lock file too."
+      - run: "git add flake.lock"
+      - title: "Build the three demos"
+        run: "nix build"
+      - run: "ls result/bin/"
+        expect_contains:
+          - "build_in_code"
+          - "handle_errors"
+          - "pipeline"
+      - check_file: "result/bin/pipeline"
+
+  - title: "Run the pipeline"
+    step: true
+    text: |
+      Tokenize, parse, validate, and serialize the `wallet_module` contract. The token
+      count and the AST summary come straight from the library, and the canonical `.lidl`
+      it emits round-trips byte-for-byte.
+    steps:
+      - run: "./result/bin/pipeline"
+        expect_contains:
+          - "tokens: 75"
+          - "module: wallet_module v1.0.0"
+          - "types: 1, methods: 2, events: 1"
+          - "valid: yes"
+          - "roundtrip stable: yes"
+          - "method transfer(from: tstr, to: tstr, amount: uint) -> result"
+          - "? label: tstr"
+        post_text: |
+          `roundtrip stable: yes` is the canonical-form guarantee in action: the text that
+          `serialize()` produces parses to the same AST and re-serializes to identical bytes.
+          That is what lets every SDK backend treat a module's `.lidl` as a stable contract.
+
+  - title: "Run the in-code builder"
+    step: true
+    text: |
+      Emit `.lidl` for the hand-built `counter_module` — no text was parsed to produce it.
+    steps:
+      - run: "./result/bin/build_in_code"
+        expect_contains:
+          - "module counter_module {"
+          - "method increment(by: int) -> int"
+          - "event ticked(value: int)"
+
+  - title: "Run the error handler"
+    step: true
+    text: |
+      See both diagnostic channels: a located parse error, and the validator's accumulated
+      list of semantic errors.
+    steps:
+      - run: "./result/bin/handle_errors"
+        expect_contains:
+          - "parse error at 2:18 - Expected parameter name"
+          - "validation errors: 2"
+          - "Unknown type 'Unknown'"
+          - "Duplicate method definition 'f'"
+        post_text: |
+          The parser reports the **first** error with a location; the validator reports
+          **all** semantic errors at once. Wiring these two diagnostics into a backend's
+          output is how a consumer learns a dependency's `.lidl` is malformed before it ever
+          generates bindings from it.
+
+  - title: "Where this fits"
+    text: |
+      You drove the entire `logos-lidl` surface: text ↔ AST and validation, the neutral
+      core that the SDK backends build on. The next layer up — mapping LIDL primitives to
+      concrete language types (`tstr` → `QString` / `std::string` / Rust `String`), emitting
+      typed callers and event subscribers, and the runtime transport — is **not** in this
+      repo by design. For the C++ backend's end-to-end pipeline see
+      [`logos-cpp-generator`](https://github.com/logos-co/logos-cpp-sdk); for the Rust one,
+      [`logos-rust-sdk`](https://github.com/logos-co/logos-rust-sdk).
