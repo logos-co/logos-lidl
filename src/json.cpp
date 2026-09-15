@@ -2,6 +2,8 @@
 
 #include <nlohmann/json.hpp>
 
+#include <utility>
+
 namespace lidl {
 
 namespace {
@@ -129,19 +131,22 @@ TypeDecl typeDeclFromJson(const json& j)
 
 json methodToJson(const MethodDecl& m)
 {
-    // The return is a positional slot too, so it gets the same derived pair —
-    // spelled on the method because the return type has no wrapper object.
-    return json{
+    json j{
         {"name", m.name},
         {"params", paramsToJson(m.params)},
-        {"returnType", typeToJson(m.returnType)},
-        {"returnIsOptional", typeIsOptional(m.returnType)},
-        {"returnValueType", typeToJson(optionalValueType(m.returnType))},
         {"description", m.description},
         {"jsonReturn", m.jsonReturn},
         {"resultReturn", m.resultReturn},
         {"derived", m.derived},
     };
+    // Absence is structural in the wire form too. A no-return method has no
+    // returnType key; `nil` is not repurposed from CDDL's null meaning.
+    if (m.returnType) {
+        j["returnType"] = typeToJson(*m.returnType);
+        j["returnIsOptional"] = typeIsOptional(*m.returnType);
+        j["returnValueType"] = typeToJson(optionalValueType(*m.returnType));
+    }
+    return j;
 }
 
 MethodDecl methodFromJson(const json& j)
@@ -149,7 +154,15 @@ MethodDecl methodFromJson(const json& j)
     MethodDecl m;
     m.name = j.value("name", "");
     m.params = paramsFromJson(j);
-    m.returnType = typeFromJson(j.at("returnType"));
+    if (j.contains("returnType") && !j.at("returnType").is_null()) {
+        TypeExpr returnType = typeFromJson(j.at("returnType"));
+        // Accept the historical JSON AST in the same narrow place as the
+        // textual legacy spelling, then erase the sentinel immediately.
+        if (!((returnType.kind == TypeExpr::Primitive || returnType.kind == TypeExpr::Named)
+              && returnType.name == "void"
+              && returnType.elements.empty()))
+            m.returnType = std::move(returnType);
+    }
     m.description = j.value("description", "");
     m.jsonReturn = j.value("jsonReturn", false);
     m.resultReturn = j.value("resultReturn", false);

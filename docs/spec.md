@@ -71,10 +71,9 @@ LIDL's type vocabulary is borrowed straight from **CDDL** (Concise Data Definiti
 Language, [RFC 8610](https://www.rfc-editor.org/rfc/rfc8610)): the primitive names
 `tstr`, `bstr`, `int`, `uint`, `float64`, `bool`, and `any` are CDDL prelude types, the
 `;` line-comment syntax is CDDL's, and the `?` optional marker, `[…]` arrays, and
-`{K: V}` maps are CDDL-shaped. LIDL is intentionally **CDDL-flavored** — its additions
-to the primitive set are `result` (a structured success/value/error) and `void` (the
-absence of a method return value), which CDDL has no equivalents of. So the relationship
-is reuse, not avoidance.
+`{K: V}` maps are CDDL-shaped. LIDL is intentionally **CDDL-flavored** — the one addition
+to the primitive set is `result` (a structured success/value/error), which CDDL has no
+equivalent of. So the relationship is reuse, not avoidance.
 
 What LIDL does **not** adopt is CDDL *as its grammar*. The decisive reason is a single
 one:
@@ -143,7 +142,8 @@ A LIDL document declares exactly one module. The contract has four parts:
    non-empty, so a contract written before it existed serialises unchanged.
 2. **Types** — named record types (`type Name { … }`) with typed, optionally-marked
    fields. These are the structured payloads methods and events exchange.
-3. **Methods** — the call-half of the API: a name, a parameter list, and a return type.
+3. **Methods** — the call-half of the API: a name, a parameter list, and an optional
+   return clause. A method with no return value has no `->` clause.
 4. **Events** — the subscribe-half of the API: a name and a parameter list (events are
    fire-and-forget and have no return type).
 
@@ -164,6 +164,7 @@ module wallet_module {
     method getBalance(address: tstr) -> uint
     method listAccounts() -> [tstr]
     method transfer(from: tstr, to: tstr, amount: uint) -> result
+    method refresh()
 
     event onTransfer(from: tstr, to: tstr, amount: uint)
 }
@@ -185,16 +186,18 @@ Built-in primitive types — the leaves every composite is built from:
 | `bool`    | Boolean |
 | `result`  | Structured result (success / value / error) |
 | `any`     | Untyped / dynamic value |
-| `void`    | No return value; valid only as a direct method return type |
 
 The primitive names (and the `;`, `?`, `[…]`, `{K: V}` syntax) are taken from CDDL
-([RFC 8610](https://www.rfc-editor.org/rfc/rfc8610)); `result` and `void` are the
-Logos-specific additions. See [Why not just use CDDL?](#why-not-just-use-cddl) for why
-LIDL borrows CDDL's type layer but is not CDDL.
+([RFC 8610](https://www.rfc-editor.org/rfc/rfc8610)); `result` is the one Logos-specific
+addition. See [Why not just use CDDL?](#why-not-just-use-cddl) for why LIDL borrows
+CDDL's type layer but is not CDDL.
 
-`void` is a return marker rather than a value type. It may appear only as the complete,
-direct return type of a method (`method notify() -> void`). It is invalid in record
-fields, method or event parameters, and inside arrays, maps, or optionals.
+No-return is deliberately outside the type system. `method notify()` returns no value;
+`method lookup() -> T` returns a `T`. This keeps CDDL data types about values: in
+particular, CDDL `nil` denotes an actual null value and is not overloaded to mean that a
+method has no return. For migration, the parser accepts the historical direct spelling
+`method notify() -> void`, but the canonical serializer always emits `method notify()`.
+`void` is never accepted in a field, parameter, event, or composite type.
 
 How each primitive maps onto a concrete language type (`tstr` → `QString` vs.
 `std::string` vs. a Rust `String`, etc.) is a **backend** concern and is intentionally
@@ -215,7 +218,7 @@ A field may also be marked optional with a leading `?` before its name
 ### Optionality
 
 An **optional slot** is any place a value can be empty: a record field, a method
-parameter, a method return type, or an event parameter. The rules below are normative
+parameter, a present method return type, or an event parameter. The rules below are normative
 — every SDK backend and every wire encoder must implement exactly this.
 
 #### Cardinality — `?T` is two-state
@@ -251,7 +254,8 @@ backend reads both and emits one. It does not compute this itself: the frontend 
 `fieldIsOptional(f)` (true for either spelling) and `fieldValueType(f)` (the value type
 with optionality stripped), and the JSON wire form carries the same answer as
 `isOptional` + `valueType` on every field and parameter, and `returnIsOptional` +
-`returnValueType` on every method. Those are the only correct source of the answer; the
+`returnValueType` on every method that has a return clause. A no-return method omits
+`returnType` and both derived return keys entirely. Those are the only correct source of the answer; the
 raw `optional` flag and the type kind are the verbatim spelling, kept so the document
 round-trips, and reading either one alone is a bug.
 
@@ -319,8 +323,8 @@ contract-level rules a backend can rely on. A module is valid when:
   nesting depth inside arrays/maps/optionals) resolves to a `type` declared in the
   module. Being inside an optional does not exempt a type from this — optionality
   widens the domain by one inhabitant, it does not switch off type checking.
-- `void` appears only as a method's direct return type; value-bearing slots and
-  composite types cannot contain it.
+- A method may omit its return clause. `void` is not a type; its historical direct-return
+  spelling is accepted only as parser input and normalized to an omitted clause.
 - No optional appears in a **map key** position (`{?tstr: int}`): a key has no empty
   inhabitant.
 
@@ -381,7 +385,7 @@ accessors are how it avoids caring.
   column.
 - **FR-2 — Parsing.** Recursive-descent parse the token stream into a single
   `ModuleDecl`, supporting metadata, named record types with optional fields, methods
-  with parameter lists and return types, events with parameter lists, and arbitrarily
+  with parameter lists and optional return clauses, events with parameter lists, and arbitrarily
   nested array / map / optional / named / primitive type expressions. Reject trailing
   content after the module's closing brace. Honor the structurally-reserved-keyword rule.
   Report the first error with line and column.
@@ -392,7 +396,7 @@ accessors are how it avoids caring.
 - **FR-4b — Optionality accessors.** Expose the reconciliation of the two optional
   spellings as part of the frontend's public surface — `fieldIsOptional(f)` /
   `fieldValueType(f)` on the AST, and the derived `isOptional` / `valueType` (and
-  `returnIsOptional` / `returnValueType`) keys on the JSON wire form reached through the
+  `returnIsOptional` / `returnValueType` for methods that return a value) keys on the JSON wire form reached through the
   C ABI — so no backend re-derives optionality and the two spellings cannot drift apart.
   Serialization must nonetheless preserve the spelling as written.
 - **FR-5 — Language neutrality.** Contain no target-language type mapping and no code

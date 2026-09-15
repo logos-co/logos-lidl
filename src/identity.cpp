@@ -40,8 +40,9 @@ const char* identityDescription(const std::string& methodName)
 bool matchesIdentitySignature(const MethodDecl& md)
 {
     return md.params.empty()
-        && md.returnType.kind == TypeExpr::Primitive
-        && md.returnType.name == "tstr";
+        && md.returnType
+        && md.returnType->kind == TypeExpr::Primitive
+        && md.returnType->name == "tstr";
 }
 
 std::string describeSignature(const MethodDecl& md)
@@ -51,8 +52,11 @@ std::string describeSignature(const MethodDecl& md)
         if (i) s += ", ";
         s += md.params[i].name;
     }
-    s += ") -> ";
-    s += md.returnType.name.empty() ? "void" : md.returnType.name;
+    s += ")";
+    if (md.returnType) {
+        s += " -> ";
+        s += md.returnType->name;
+    }
     return s;
 }
 

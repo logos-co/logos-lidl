@@ -85,7 +85,8 @@ std::string serialize(const ModuleDecl& module)
         if (md.derived) continue;
         s << "  method " << md.name << "(";
         serializeParams(s, md.params);
-        s << ") -> " << serializeTypeExpr(md.returnType);
+        s << ")";
+        if (md.returnType) s << " -> " << serializeTypeExpr(*md.returnType);
         if (!md.description.empty()) s << " description \"" << lidlEscapeStr(md.description) << "\"";
         s << "\n";
     }

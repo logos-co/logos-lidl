@@ -6,6 +6,7 @@
 // produced by serialize() is the cross-language artifact modules publish.
 
 #include <string>
+#include <optional>
 #include <vector>
 
 namespace lidl {
@@ -108,7 +109,11 @@ inline const TypeExpr& paramValueType(const ParamDecl& p)
 struct MethodDecl {
     std::string name;
     std::vector<ParamDecl> params;
-    TypeExpr returnType;
+    // Absent means the method returns no value and is written without a
+    // return clause (`method notify()`). No sentinel type is involved: `nil`
+    // remains the CDDL null value, while `void` is accepted only as a legacy
+    // input spelling and normalized to absence by the parser/JSON bridge.
+    std::optional<TypeExpr> returnType;
     // Doc comment adjacent to the method declaration (becomes "description").
     std::string description;
     // True when the impl returns LogosMap or LogosList (nlohmann::json).

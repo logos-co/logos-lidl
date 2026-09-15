@@ -21,7 +21,8 @@ namespace lidl {
 //     `type` mirrors the type as written — together they make the wire form
 //     round-trip-exact for either spelling.
 //   * `isOptional` + `valueType` (on every field and parameter) and
-//     `returnIsOptional` + `returnValueType` (on every method) are the
+//     `returnIsOptional` + `returnValueType` (on every method that returns a
+//     value; no-return methods omit all three return keys) are the
 //     frontend's DERIVED answer — `? name: T` and `name: ?T` produce the same
 //     pair. Backends read these; nothing else. They are output-only and are
 //     ignored by moduleFromJson, so a consumer that writes JSON back only has
