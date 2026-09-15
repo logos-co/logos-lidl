@@ -2,6 +2,7 @@
 #include "lidl/lexer.hpp"
 
 #include <unordered_set>
+#include <utility>
 
 namespace lidl {
 
@@ -160,9 +161,19 @@ private:
         if (!expect(Token::LParen, "method parameters")) return false;
         if (!parseParams(md.params)) return false;
         if (!expect(Token::RParen, "method parameters")) return false;
-        if (!expect(Token::Arrow, "method return type")) return false;
-        if (!parseTypeExpr(md.returnType)) return false;
-        // Optional trailing doc: `-> ret description "..."`. Carries the
+        if (consume(Token::Arrow)) {
+            TypeExpr returnType;
+            if (!parseTypeExpr(returnType)) return false;
+            // Migration path for contracts authored before no-return became
+            // structural. `void` is not a type: accept only this exact direct
+            // return spelling and canonicalize it to an absent return clause.
+            if (!(returnType.kind == TypeExpr::Named
+                  && returnType.name == "void"
+                  && returnType.elements.empty()))
+                md.returnType = std::move(returnType);
+        }
+        // Optional trailing doc: `) description "..."` or
+        // `-> ret description "..."`. Carries the
         // method's doc comment across a .lidl round-trip so introspection
         // (lm / getMethods) still surfaces it.
         if (at(Token::Description)) {
@@ -176,8 +187,8 @@ private:
         // LogosMap/LogosList -> json). Without this, a header-first universal
         // module (header -> .lidl -> cdylib backend) loses the flags and the
         // cdylib codegen/eligibility mis-handles result / map / list returns.
-        {
-            const TypeExpr& rt = md.returnType;
+        if (md.returnType) {
+            const TypeExpr& rt = *md.returnType;
             md.resultReturn = (rt.kind == TypeExpr::Primitive && rt.name == "result");
             md.jsonReturn =
                 rt.kind == TypeExpr::Map

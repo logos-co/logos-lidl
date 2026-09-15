@@ -72,7 +72,8 @@ backends and tests can compare contracts structurally.
   the spelling *as written* — `? name: T` sets the flag, `name: ?T` makes the type an
   `Optional` — so never read either one alone; use the accessors below.
 - **`ParamDecl`** — a parameter: `name`, `type`.
-- **`MethodDecl`** — a method: `name`, `params`, `returnType`, plus three fields that the
+- **`MethodDecl`** — a method: `name`, `params`, optional `returnType` (absent means no
+  `->` clause and no returned value), plus three fields that the
   text grammar does **not** populate but backends and richer producers do:
   - `description` — a doc comment associated with the method (surfaced as the method's
     description by backends).
@@ -153,7 +154,7 @@ metadata   = "version" STRING | "description" STRING | "category" STRING
            | "optional_depends" "[" (NAME ("," NAME)*)? "]"
 type_def   = "type" NAME "{" field* "}"
 field      = "?"? NAME ":" type_expr
-method_def = "method" NAME "(" params ")" "->" type_expr
+method_def = "method" NAME "(" params ")" ("->" type_expr)?
 event_def  = "event" NAME "(" params ")"
 params     = (NAME ":" type_expr ("," NAME ":" type_expr)*)?
 type_expr  = "?" type_expr
@@ -168,6 +169,10 @@ position, a keyword token is accepted as an identifier. In `type_expr`, a bare n
 classified `Primitive` if it is one of the eight builtins
 (`tstr bstr int uint float64 bool result any`) and `Named` otherwise — unknown named
 types are not rejected here but later by the validator.
+
+The historical direct spelling `-> void` is accepted as migration input and stored as
+an absent `returnType`; `void` is not part of `type_expr`, and serialization therefore
+emits the canonical no-return form with no arrow.
 
 ### Validator (`validator.hpp` / `validator.cpp`)
 
@@ -185,7 +190,8 @@ optional `any` (`any` already admits the empty value).
 
 `std::string serialize(const ModuleDecl& module)` — renders a `ModuleDecl` to canonical
 `.lidl` text: two-space indentation, metadata emitted only when non-empty, a `depends
-[...]` line always present, then types, then methods, then events. Type expressions
+[...]` line always present, then types, then methods, then events. A method with an
+absent `returnType` is emitted without an arrow. Type expressions
 render recursively (`[T]`, `{K: V}`, `? T`). Output re-parses to an equal AST and is
 byte-stable on the next serialization (see roundtrip tests). It does **not** emit
 comments, `description`s, or the `jsonReturn`/`resultReturn` flags.

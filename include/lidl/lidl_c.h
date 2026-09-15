@@ -13,7 +13,8 @@
  * `name: ?T` and the two mean the same thing, so the JSON carries the
  * frontend's own reconciliation and a backend must not compute its own.
  * Read `isOptional` + `valueType` on every field and parameter object, and
- * `returnIsOptional` + `returnValueType` on every method object. The raw
+ * `returnIsOptional` + `returnValueType` on every method object that has a
+ * `returnType`; no-return methods omit all three keys. The raw
  * `optional` flag and `type` are the verbatim spelling, kept only so the wire
  * form round-trips; do not decide optionality from them. The derived keys are
  * output-only and are ignored on the way back in. */

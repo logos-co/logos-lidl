@@ -94,7 +94,8 @@ TEST(Parser, ParsesCanonicalDocument)
     ASSERT_EQ(m.methods.size(), 2u);
     EXPECT_EQ(m.methods[0].params.size(), 2u);
     EXPECT_EQ(m.methods[0].params[1].type.kind, TypeExpr::Named);
-    EXPECT_EQ(m.methods[1].returnType.name, "int");
+    ASSERT_TRUE(m.methods[1].returnType);
+    EXPECT_EQ(m.methods[1].returnType->name, "int");
     ASSERT_EQ(m.events.size(), 1u);
     EXPECT_EQ(m.events[0].name, "messageReceived");
 }
@@ -249,6 +250,59 @@ TEST(Validator, AcceptsCanonicalDocument)
     EXPECT_FALSE(vr.hasErrors());
 }
 
+TEST(Validator, AcceptsNoReturnClauseAndRoundTripsIt)
+{
+    const char* source =
+        "module m {\n"
+        "  depends []\n"
+        "\n"
+        "  method notify()\n"
+        "}\n";
+
+    auto pr = parse(source);
+    ASSERT_FALSE(pr.hasError()) << pr.error;
+    ASSERT_EQ(pr.module.methods.size(), 1u);
+    EXPECT_FALSE(pr.module.methods[0].returnType);
+    EXPECT_FALSE(validate(pr.module).hasErrors());
+
+    const std::string canonical = serialize(pr.module);
+    EXPECT_EQ(canonical, source);
+    auto reparsed = parse(canonical);
+    ASSERT_FALSE(reparsed.hasError()) << reparsed.error;
+    EXPECT_EQ(reparsed.module, pr.module);
+    EXPECT_FALSE(validate(reparsed.module).hasErrors());
+}
+
+TEST(Parser, NormalizesLegacyVoidReturnToNoReturnClause)
+{
+    auto pr = parse("module m { depends [] method notify() -> void }");
+    ASSERT_FALSE(pr.hasError()) << pr.error;
+    ASSERT_EQ(pr.module.methods.size(), 1u);
+    EXPECT_FALSE(pr.module.methods[0].returnType);
+    EXPECT_EQ(serialize(pr.module),
+              "module m {\n  depends []\n\n  method notify()\n}\n");
+}
+
+TEST(Validator, RejectsVoidAnywhereThatRequiresAValue)
+{
+    auto pr = parse(
+        "module m {\n"
+        "  depends []\n"
+        "  type T { field: void }\n"
+        "  method parameter(value: void) -> bool\n"
+        "  method optionalReturn() -> ?void\n"
+        "  method arrayReturn() -> [void]\n"
+        "  method mapReturn() -> {tstr: void}\n"
+        "  event changed(value: void)\n"
+        "}\n");
+    ASSERT_FALSE(pr.hasError()) << pr.error;
+
+    const auto vr = validate(pr.module);
+    ASSERT_EQ(vr.errors.size(), 6u);
+    for (const auto& error : vr.errors)
+        EXPECT_NE(error.find("Unknown type 'void'"), std::string::npos) << error;
+}
+
 TEST(Descriptions, ParsedFromMethodsAndEvents)
 {
     auto pr = parse(kDocumented);
@@ -308,6 +362,29 @@ TEST(CAbi, ParseToJsonCarriesDescriptionsAndFlags)
     EXPECT_NE(j.find("\"jsonReturn\":true"), std::string::npos);
 
     lidl_free_string(json);
+}
+
+TEST(CAbi, NoReturnOmitsReturnKeysAndLegacyJsonNormalizes)
+{
+    char* err = nullptr;
+    char* raw = lidl_parse_to_json(
+        "module m { depends [] method notify() }", &err);
+    ASSERT_NE(raw, nullptr) << (err ? err : "(no error)");
+    const nlohmann::json noReturn = nlohmann::json::parse(raw);
+    const auto& method = noReturn.at("methods").at(0);
+    EXPECT_FALSE(method.contains("returnType"));
+    EXPECT_FALSE(method.contains("returnIsOptional"));
+    EXPECT_FALSE(method.contains("returnValueType"));
+    lidl_free_string(raw);
+
+    nlohmann::json legacy = noReturn;
+    legacy["methods"][0]["returnType"] = {
+        {"kind", "primitive"}, {"name", "void"}, {"elements", nlohmann::json::array()}
+    };
+    char* canonical = lidl_serialize_from_json(legacy.dump().c_str(), &err);
+    ASSERT_NE(canonical, nullptr) << (err ? err : "(no error)");
+    EXPECT_STREQ(canonical, "module m {\n  depends []\n\n  method notify()\n}\n");
+    lidl_free_string(canonical);
 }
 
 TEST(CAbi, JsonRoundTripStable)
@@ -422,8 +499,9 @@ TEST(Optional, PositionalSlotsUseTheTypeSpelling)
 
     EXPECT_TRUE(paramIsOptional(m.params.at(0)));
     EXPECT_EQ(paramValueType(m.params.at(0)), (TypeExpr{TypeExpr::Primitive, "tstr", {}}));
-    EXPECT_TRUE(typeIsOptional(m.returnType));
-    EXPECT_EQ(optionalValueType(m.returnType), (TypeExpr{TypeExpr::Named, "Account", {}}));
+    ASSERT_TRUE(m.returnType);
+    EXPECT_TRUE(typeIsOptional(*m.returnType));
+    EXPECT_EQ(optionalValueType(*m.returnType), (TypeExpr{TypeExpr::Named, "Account", {}}));
 }
 
 TEST(Optional, IsIdempotent)
@@ -673,8 +751,9 @@ TEST(Identity, InjectsBuiltInMethodsWithTheIdentitySignature)
         const MethodDecl* md = findMethod(m, n);
         ASSERT_NE(md, nullptr) << n;
         EXPECT_TRUE(md->params.empty());
-        EXPECT_EQ(md->returnType.kind, TypeExpr::Primitive);
-        EXPECT_EQ(md->returnType.name, "tstr");
+        ASSERT_TRUE(md->returnType);
+        EXPECT_EQ(md->returnType->kind, TypeExpr::Primitive);
+        EXPECT_EQ(md->returnType->name, "tstr");
         EXPECT_FALSE(md->description.empty()) << n;
         EXPECT_TRUE(md->derived) << n;
     }

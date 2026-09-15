@@ -51,7 +51,9 @@ public:
         for (const MethodDecl& md : m_mod.methods) {
             if (seenMethods.count(md.name)) result.errors.push_back("Duplicate method definition '" + md.name + "'");
             seenMethods.insert(md.name);
-            validateTypeExpr(md.returnType, result, "return type of method '" + md.name + "'", false, false);
+            if (md.returnType)
+                validateTypeExpr(*md.returnType, result,
+                                 "return type of method '" + md.name + "'", false, false);
             std::unordered_set<std::string> seenParams;
             for (const ParamDecl& pd : md.params) {
                 validateTypeExpr(pd.type, result, "parameter '" + pd.name + "' of method '" + md.name + "'", false, false);
