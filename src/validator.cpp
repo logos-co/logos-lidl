@@ -9,7 +9,7 @@ namespace {
 const std::unordered_set<std::string>& builtinTypes()
 {
     static const std::unordered_set<std::string> bt = {
-        "tstr", "bstr", "int", "uint", "float64", "bool", "result", "any"
+        "tstr", "bstr", "int", "uint", "float64", "bool", "result", "any", "void"
     };
     return bt;
 }
@@ -51,7 +51,8 @@ public:
         for (const MethodDecl& md : m_mod.methods) {
             if (seenMethods.count(md.name)) result.errors.push_back("Duplicate method definition '" + md.name + "'");
             seenMethods.insert(md.name);
-            validateTypeExpr(md.returnType, result, "return type of method '" + md.name + "'", false, false);
+            validateTypeExpr(md.returnType, result, "return type of method '" + md.name + "'",
+                             false, false, /*allowVoid=*/true);
             std::unordered_set<std::string> seenParams;
             for (const ParamDecl& pd : md.params) {
                 validateTypeExpr(pd.type, result, "parameter '" + pd.name + "' of method '" + md.name + "'", false, false);
@@ -85,10 +86,18 @@ private:
 
     // `inMapKey` marks the key half of a `{K: V}`; `underOptional` marks a
     // type expression that is already the payload of an enclosing optional.
+    // `allowVoid` is true only for the complete, direct return type of a
+    // method: void is not a value and therefore cannot inhabit any other slot
+    // or be nested inside a composite.
     void validateTypeExpr(const TypeExpr& te, ValidationResult& result,
-                          const std::string& where, bool inMapKey, bool underOptional) {
+                          const std::string& where, bool inMapKey, bool underOptional,
+                          bool allowVoid = false) {
         switch (te.kind) {
-        case TypeExpr::Primitive: break;
+        case TypeExpr::Primitive:
+            if (te.name == "void" && !allowVoid)
+                result.errors.push_back("Type 'void' is only allowed as a direct method return type (in "
+                                        + where + ")");
+            break;
         case TypeExpr::Named:
             if (!m_declaredTypes.count(te.name)) result.errors.push_back("Unknown type '" + te.name + "'");
             break;

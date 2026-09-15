@@ -71,9 +71,10 @@ LIDL's type vocabulary is borrowed straight from **CDDL** (Concise Data Definiti
 Language, [RFC 8610](https://www.rfc-editor.org/rfc/rfc8610)): the primitive names
 `tstr`, `bstr`, `int`, `uint`, `float64`, `bool`, and `any` are CDDL prelude types, the
 `;` line-comment syntax is CDDL's, and the `?` optional marker, `[…]` arrays, and
-`{K: V}` maps are CDDL-shaped. LIDL is intentionally **CDDL-flavored** — the one addition
-to the primitive set is `result` (a structured success/value/error), which CDDL has no
-equivalent of. So the relationship is reuse, not avoidance.
+`{K: V}` maps are CDDL-shaped. LIDL is intentionally **CDDL-flavored** — its additions
+to the primitive set are `result` (a structured success/value/error) and `void` (the
+absence of a method return value), which CDDL has no equivalents of. So the relationship
+is reuse, not avoidance.
 
 What LIDL does **not** adopt is CDDL *as its grammar*. The decisive reason is a single
 one:
@@ -184,11 +185,16 @@ Built-in primitive types — the leaves every composite is built from:
 | `bool`    | Boolean |
 | `result`  | Structured result (success / value / error) |
 | `any`     | Untyped / dynamic value |
+| `void`    | No return value; valid only as a direct method return type |
 
 The primitive names (and the `;`, `?`, `[…]`, `{K: V}` syntax) are taken from CDDL
-([RFC 8610](https://www.rfc-editor.org/rfc/rfc8610)); `result` is the one Logos-specific
-addition. See [Why not just use CDDL?](#why-not-just-use-cddl) for why LIDL borrows
-CDDL's type layer but is not CDDL.
+([RFC 8610](https://www.rfc-editor.org/rfc/rfc8610)); `result` and `void` are the
+Logos-specific additions. See [Why not just use CDDL?](#why-not-just-use-cddl) for why
+LIDL borrows CDDL's type layer but is not CDDL.
+
+`void` is a return marker rather than a value type. It may appear only as the complete,
+direct return type of a method (`method notify() -> void`). It is invalid in record
+fields, method or event parameters, and inside arrays, maps, or optionals.
 
 How each primitive maps onto a concrete language type (`tstr` → `QString` vs.
 `std::string` vs. a Rust `String`, etc.) is a **backend** concern and is intentionally
@@ -313,6 +319,8 @@ contract-level rules a backend can rely on. A module is valid when:
   nesting depth inside arrays/maps/optionals) resolves to a `type` declared in the
   module. Being inside an optional does not exempt a type from this — optionality
   widens the domain by one inhabitant, it does not switch off type checking.
+- `void` appears only as a method's direct return type; value-bearing slots and
+  composite types cannot contain it.
 - No optional appears in a **map key** position (`{?tstr: int}`): a key has no empty
   inhabitant.
 

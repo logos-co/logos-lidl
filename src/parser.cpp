@@ -10,7 +10,7 @@ namespace {
 const std::unordered_set<std::string>& builtinTypes()
 {
     static const std::unordered_set<std::string> bt = {
-        "tstr", "bstr", "int", "uint", "float64", "bool", "result", "any"
+        "tstr", "bstr", "int", "uint", "float64", "bool", "result", "any", "void"
     };
     return bt;
 }

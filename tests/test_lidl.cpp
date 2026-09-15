@@ -249,6 +249,51 @@ TEST(Validator, AcceptsCanonicalDocument)
     EXPECT_FALSE(vr.hasErrors());
 }
 
+TEST(Validator, AcceptsVoidAsADirectMethodReturnAndRoundTripsIt)
+{
+    const char* source =
+        "module m {\n"
+        "  depends []\n"
+        "\n"
+        "  method notify() -> void\n"
+        "}\n";
+
+    auto pr = parse(source);
+    ASSERT_FALSE(pr.hasError()) << pr.error;
+    ASSERT_EQ(pr.module.methods.size(), 1u);
+    EXPECT_EQ(pr.module.methods[0].returnType.kind, TypeExpr::Primitive);
+    EXPECT_EQ(pr.module.methods[0].returnType.name, "void");
+    EXPECT_FALSE(validate(pr.module).hasErrors());
+
+    const std::string canonical = serialize(pr.module);
+    EXPECT_EQ(canonical, source);
+    auto reparsed = parse(canonical);
+    ASSERT_FALSE(reparsed.hasError()) << reparsed.error;
+    EXPECT_EQ(reparsed.module, pr.module);
+    EXPECT_FALSE(validate(reparsed.module).hasErrors());
+}
+
+TEST(Validator, RejectsVoidAnywhereThatRequiresAValue)
+{
+    auto pr = parse(
+        "module m {\n"
+        "  depends []\n"
+        "  type T { field: void }\n"
+        "  method parameter(value: void) -> bool\n"
+        "  method optionalReturn() -> ?void\n"
+        "  method arrayReturn() -> [void]\n"
+        "  method mapReturn() -> {tstr: void}\n"
+        "  event changed(value: void)\n"
+        "}\n");
+    ASSERT_FALSE(pr.hasError()) << pr.error;
+
+    const auto vr = validate(pr.module);
+    ASSERT_EQ(vr.errors.size(), 6u);
+    for (const auto& error : vr.errors)
+        EXPECT_NE(error.find("only allowed as a direct method return type"), std::string::npos)
+            << error;
+}
+
 TEST(Descriptions, ParsedFromMethodsAndEvents)
 {
     auto pr = parse(kDocumented);
