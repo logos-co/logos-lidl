@@ -22,6 +22,24 @@ every backend builds on:
 - **Serialize** a `ModuleDecl` back to canonical `.lidl` text.
 - **Validate** a `ModuleDecl` for semantic consistency.
 
+Published contracts always use the serializer's canonical output. An authored
+file is parsed, validated, and serialized before it becomes a module's `.#lidl`
+output, its `assets/lidl/<name>.lidl` package asset, or the value returned by
+the runtime `lidl()` method. Header- and trait-derived contracts already end at
+the same serializer, so those external forms are byte-indistinguishable.
+
+Every callable module also has three derived built-ins:
+
+- `name() -> tstr`
+- `version() -> tstr`
+- `lidl() -> tstr`
+
+Backends inject these into generated provider and consumer code. They are
+marked `derived` in the AST and omitted by serialization, so the canonical
+document describes only the authored API. `lidl()` is generator-owned and an
+authored declaration of that name is rejected; this guarantees its result is
+the exact canonical document rather than module-supplied text.
+
 It deliberately contains **no code generation** and **no type mapping** to any target
 language. Those are the responsibility of each SDK's backend (e.g. C++ glue/clients in
 `logos-cpp-generator`, Rust bindings in `logos-rust-sdk`). The frontend's only job is

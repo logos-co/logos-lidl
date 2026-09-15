@@ -43,7 +43,7 @@ LIDL_C_EXPORT char* lidl_serialize_from_json(const char* json, char** err);
  * {"errors":[...],"warnings":[...]}, or NULL if the input JSON is malformed. */
 LIDL_C_EXPORT char* lidl_validate_json(const char* json);
 
-/* Append the derived module identity methods -- name() and version() -- to a
+/* Append the derived module built-ins -- name(), version(), and lidl() -- to a
  * JSON AST, returning the augmented JSON. See lidl/identity.hpp for why this
  * is a separate pass rather than part of parsing.
  *

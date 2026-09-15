@@ -630,8 +630,8 @@ TEST(CAbi, ValidateJsonReportsOptionalWarnings)
 
 // --- Identity methods -------------------------------------------------------
 //
-// `name()` and `version()` are derived from the module declaration, never
-// hand-written. The pass runs on BOTH the provider and the consumer side, so
+// `name()`, `version()`, and `lidl()` are derived from the module
+// declaration/contract, never hand-written. The pass runs on BOTH the provider and consumer side, so
 // these tests pin the properties that make the two sides agree: it is
 // idempotent, it appends (never reorders), it defers to an author who
 // implements the method, and it refuses a reserved name used for anything else.
@@ -654,7 +654,7 @@ const MethodDecl* findMethod(const ModuleDecl& m, const std::string& name)
 
 } // namespace
 
-TEST(Identity, InjectsBothMethodsWithTheIdentitySignature)
+TEST(Identity, InjectsBuiltInMethodsWithTheIdentitySignature)
 {
     ModuleDecl m = parseOk("module m {\n  depends []\n  method work() -> bool\n}\n");
     ASSERT_EQ(m.methods.size(), 1u);
@@ -663,12 +663,13 @@ TEST(Identity, InjectsBothMethodsWithTheIdentitySignature)
     EXPECT_FALSE(r.hasError()) << r.error;
     EXPECT_TRUE(r.addedName);
     EXPECT_TRUE(r.addedVersion);
+    EXPECT_TRUE(r.addedLidl);
 
-    ASSERT_EQ(m.methods.size(), 3u);
+    ASSERT_EQ(m.methods.size(), 4u);
     // Appended, so an existing method keeps its position.
     EXPECT_EQ(m.methods[0].name, "work");
 
-    for (const char* n : { "name", "version" }) {
+    for (const char* n : { "name", "version", "lidl" }) {
         const MethodDecl* md = findMethod(m, n);
         ASSERT_NE(md, nullptr) << n;
         EXPECT_TRUE(md->params.empty());
@@ -690,15 +691,16 @@ TEST(Identity, IsIdempotent)
     EXPECT_FALSE(second.hasError()) << second.error;
     EXPECT_FALSE(second.addedName);
     EXPECT_FALSE(second.addedVersion);
+    EXPECT_FALSE(second.addedLidl);
     EXPECT_EQ(m.methods.size(), once.methods.size());
     EXPECT_TRUE(m == once);
 }
 
 TEST(Identity, DerivedMethodsNeverReachTheArtifact)
 {
-    // The published .lidl is the author's contract verbatim. Serializing an
+    // The published .lidl is the canonical authored contract. Serializing an
     // injected AST must produce the same text as serializing the raw one, so
-    // no call site can leak the identity methods by injecting too early.
+    // no call site can leak the built-ins by injecting too early.
     const std::string src = "module m {\n  version \"1.0.0\"\n  depends []\n\n"
                             "  method work() -> bool\n}\n";
     ModuleDecl m = parseOk(src);
@@ -730,11 +732,12 @@ TEST(Identity, DefersToAnAuthorWhoImplementsIt)
     EXPECT_TRUE(r.addedVersion);
 
     EXPECT_EQ(findMethod(m, "name")->description, "mine");
-    EXPECT_EQ(m.methods.size(), 2u);
+    EXPECT_EQ(m.methods.size(), 3u);
     // The author owns it, so it is NOT derived: it stays in the published
     // contract and backends delegate to the impl for it.
     EXPECT_FALSE(findMethod(m, "name")->derived);
     EXPECT_TRUE(findMethod(m, "version")->derived);
+    EXPECT_TRUE(findMethod(m, "lidl")->derived);
     EXPECT_NE(serialize(m).find("method name()"), std::string::npos);
 }
 
@@ -754,12 +757,29 @@ TEST(Identity, RejectsAReservedNameUsedForSomethingElse)
     const IdentityInjection b = injectIdentityMethods(wrongReturn);
     EXPECT_TRUE(b.hasError());
     EXPECT_NE(b.error.find("version"), std::string::npos) << b.error;
+
+    ModuleDecl wrongLidl = parseOk(
+        "module m {\n  depends []\n  method lidl(format: tstr) -> tstr\n}\n");
+    const IdentityInjection c = injectIdentityMethods(wrongLidl);
+    EXPECT_TRUE(c.hasError());
+    EXPECT_NE(c.error.find("lidl"), std::string::npos) << c.error;
+}
+
+TEST(Identity, RejectsAnAuthoredLidlMethodEvenWithTheBuiltInSignature)
+{
+    ModuleDecl m = parseOk(
+        "module m {\n  depends []\n  method lidl() -> tstr\n}\n");
+    const IdentityInjection r = injectIdentityMethods(m);
+    EXPECT_TRUE(r.hasError());
+    EXPECT_NE(r.error.find("generator-owned"), std::string::npos) << r.error;
+    // Validation is transactional: name/version were not appended first.
+    EXPECT_EQ(m.methods.size(), 1u);
 }
 
 TEST(Identity, ParseAndSerializeStayFreeOfIt)
 {
     // The pass is explicit, never folded into parse(): a published .lidl must
-    // round-trip byte-identically, and must not carry two methods the author
+    // normalize deterministically, and must not carry built-ins the author
     // did not write.
     const std::string src = "module m {\n  version \"1.0.0\"\n  depends []\n\n"
                             "  method work() -> bool\n}\n";
@@ -773,6 +793,7 @@ TEST(Identity, NamesTheReservedSet)
 {
     EXPECT_TRUE(isIdentityMethod("name"));
     EXPECT_TRUE(isIdentityMethod("version"));
+    EXPECT_TRUE(isIdentityMethod("lidl"));
     EXPECT_FALSE(isIdentityMethod("moduleVersion"));
     EXPECT_FALSE(isIdentityMethod(""));
 }
