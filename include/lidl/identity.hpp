@@ -1,12 +1,13 @@
 #ifndef LIDL_IDENTITY_HPP
 #define LIDL_IDENTITY_HPP
 
-// Module identity methods — `name()` and `version()`.
+// Module built-in methods — `name()`, `version()`, and `lidl()`.
 //
 // Every Logos module answers these, and no author writes them: they are
 // derived from the module declaration (which the builder derives in turn from
-// metadata.json), so the value a module reports cannot drift from the value it
-// was built with. Hand-written literals did drift, which is why this exists.
+// metadata.json) and its canonical LIDL contract, so the values a module
+// reports cannot drift from the artifact it was built with. Hand-written
+// literals did drift, which is why this exists.
 //
 // Every backend calls injectIdentityMethods() on each ModuleDecl it obtains —
 // parsed from a .lidl, or derived from an impl header — on BOTH the provider
@@ -15,9 +16,9 @@
 //
 // The injected methods are marked MethodDecl::derived, which has two
 // consequences worth knowing: serialize() omits them, so a published .lidl
-// stays exactly what its author wrote no matter when injection ran; and a
-// backend must emit a BODY for them rather than delegating to the module's
-// impl class, which has no such member.
+// stays the canonical authored API no matter when injection ran; and a backend
+// must emit a BODY for them rather than delegating to the module's impl class,
+// which has no such member.
 
 #include "lidl/ast.hpp"
 
@@ -25,15 +26,16 @@
 
 namespace lidl {
 
-// The identity method names. `name` is the module's identity; `version` is
-// release metadata the module reports. They are not the same kind of thing,
-// and only `name` is load-bearing (the host refuses a module whose reported
-// name disagrees with the package name it was loaded as).
+// The built-in method names. `name` is the module's identity; `version` is
+// release metadata; `lidl` returns the module's canonical `.lidl` document.
+// Only `name` is load-bearing (the host refuses a module whose
+// reported name disagrees with the package name it was loaded as).
 extern const char* const kIdentityName;
 extern const char* const kIdentityVersion;
+extern const char* const kLidl;
 
-// True for a name reserved by the identity surface. Backends use this to keep
-// an author's own declaration from being treated as ordinary API.
+// True for a name reserved by the built-in module surface. Backends use this
+// to keep an author's own declaration from being treated as ordinary API.
 bool isIdentityMethod(const std::string& methodName);
 
 // The signature every identity method has: no parameters, returns tstr.
@@ -42,6 +44,7 @@ MethodDecl identityMethodDecl(const std::string& methodName);
 struct IdentityInjection {
     bool addedName = false;
     bool addedVersion = false;
+    bool addedLidl = false;
     // Non-empty when the module already declares an identity method with an
     // incompatible signature. The caller MUST surface this rather than
     // silently keeping the author's version: a `name` that takes an argument
@@ -52,15 +55,16 @@ struct IdentityInjection {
     bool hasError() const { return !error.empty(); }
 };
 
-// Append `name()` and `version()` to `module` unless it already declares them.
+// Append `name()`, `version()`, and `lidl()` to `module` unless it already
+// declares them.
 //
 // Appends rather than inserts so existing method positions are unchanged, for
 // any backend that keys on declaration order.
 //
-// An existing declaration with the exact identity signature is left alone and
-// reported as not-added — this is not an error. A module MAY implement `name()`
-// itself (some do); it then simply owns the method, keeps `derived == false`,
-// and backends delegate to it as they would to any other author method.
+// An existing `name()` or `version()` declaration with the exact identity
+// signature is left alone and reported as not-added — this is not an error for
+// compatibility with older modules. `lidl()` is always generator-owned and may
+// not be authored, because its bytes must be the canonical built artifact.
 //
 // Idempotent: running it twice over the same AST adds nothing the second time.
 IdentityInjection injectIdentityMethods(ModuleDecl& module);

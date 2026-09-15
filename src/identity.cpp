@@ -6,10 +6,13 @@ namespace lidl {
 
 const char* const kIdentityName = "name";
 const char* const kIdentityVersion = "version";
+const char* const kLidl = "lidl";
 
 bool isIdentityMethod(const std::string& methodName)
 {
-    return methodName == kIdentityName || methodName == kIdentityVersion;
+    return methodName == kIdentityName
+        || methodName == kIdentityVersion
+        || methodName == kLidl;
 }
 
 namespace {
@@ -24,9 +27,11 @@ TypeExpr tstrType()
 
 const char* identityDescription(const std::string& methodName)
 {
-    return methodName == kIdentityName
-        ? "The module's name, as declared in its metadata."
-        : "The module's version, as declared in its metadata.";
+    if (methodName == kIdentityName)
+        return "The module's name, as declared in its metadata.";
+    if (methodName == kIdentityVersion)
+        return "The module's version, as declared in its metadata.";
+    return "The module's canonical LIDL interface document.";
 }
 
 // An author-declared method may stand in for an injected one only when it is
@@ -67,7 +72,10 @@ IdentityInjection injectIdentityMethods(ModuleDecl& module)
 {
     IdentityInjection result;
 
-    const std::string wanted[] = { kIdentityName, kIdentityVersion };
+    const std::string wanted[] = { kIdentityName, kIdentityVersion, kLidl };
+
+    // Preflight before mutating the AST, so an error never leaves a half-
+    // injected module behind.
     for (const std::string& methodName : wanted) {
         auto it = std::find_if(module.methods.begin(), module.methods.end(),
                                [&](const MethodDecl& m) { return m.name == methodName; });
@@ -76,6 +84,12 @@ IdentityInjection injectIdentityMethods(ModuleDecl& module)
             // Already derived: a second pass over the same AST. Idempotent, so
             // a backend never has to track whether it injected yet.
             if (it->derived) continue;
+            if (methodName == kLidl) {
+                result.error = "module '" + module.name
+                    + "' declares 'lidl()', but 'lidl' is a generator-owned "
+                      "built-in that returns the canonical interface document";
+                return result;
+            }
             if (!matchesIdentitySignature(*it)) {
                 result.error = "module '" + module.name + "' declares '"
                     + describeSignature(*it) + "', but '" + methodName
@@ -83,12 +97,17 @@ IdentityInjection injectIdentityMethods(ModuleDecl& module)
                     + methodName + "() -> tstr'";
                 return result;
             }
-            continue; // the author implements it; leave it alone
         }
+    }
 
+    for (const std::string& methodName : wanted) {
+        const auto it = std::find_if(module.methods.begin(), module.methods.end(),
+                                     [&](const MethodDecl& m) { return m.name == methodName; });
+        if (it != module.methods.end()) continue;
         module.methods.push_back(identityMethodDecl(methodName));
         if (methodName == kIdentityName) result.addedName = true;
-        else result.addedVersion = true;
+        else if (methodName == kIdentityVersion) result.addedVersion = true;
+        else result.addedLidl = true;
     }
 
     return result;
