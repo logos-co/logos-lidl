@@ -111,8 +111,9 @@ struct MethodDecl {
     std::vector<ParamDecl> params;
     // Absent means the method returns no value and is written without a
     // return clause (`method notify()`). No sentinel type is involved: `nil`
-    // remains the CDDL null value, while `void` is accepted only as a legacy
-    // input spelling and normalized to absence by the parser/JSON bridge.
+    // is not repurposed from its CDDL null meaning, while `void` is accepted
+    // only as a legacy input spelling and normalized to absence by the
+    // parser/JSON bridge.
     std::optional<TypeExpr> returnType;
     // Doc comment adjacent to the method declaration (becomes "description").
     std::string description;
