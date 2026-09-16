@@ -368,7 +368,7 @@ This makes serialization usable for normalizing hand-written `.lidl`, for diffin
 contracts, and as the reference oracle in roundtrip tests.
 
 **Serialization preserves the spelling of an optional.** A field written `? label: tstr`
-serializes back as `? label: tstr`, and one written `note: ?tstr` as `note: ?tstr` — the
+serializes back as `? label: tstr`, and one written `note: ?tstr` as `note: ? tstr` — the
 serializer never rewrites one into the other, so a contract survives a normalization pass
 as its author wrote it. This is deliberately the opposite of the *wire* encoder, which
 does canonicalise (see [Wire semantics](#wire-semantics)): the two spellings are one
