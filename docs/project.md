@@ -1,9 +1,9 @@
 # logos-lidl — Project Description
 
 The language-neutral LIDL frontend: lexer, parser, AST/IR, serializer, and validator
-for the Logos Interface Definition Language. Pure standard C++17 with **zero
-dependencies** (the test suite uses GoogleTest, the library itself uses nothing beyond
-the standard library).
+for the Logos Interface Definition Language, plus the `lidl` command-line tool. The core
+library is pure standard C++17 with **zero dependencies**. The C ABI (`logos_lidl_c`) and
+the CLI add nlohmann/json, and the test suite uses GoogleTest.
 
 Extracted from `logos-cpp-sdk`'s `cpp-generator/experimental/lidl_*` sources and
 de-Qt'd — `QString`/`QVector` were replaced with `std::string`/`std::vector` — so the
@@ -18,19 +18,30 @@ logos-lidl/
 ├── include/lidl/                 # Public headers (the entire API surface)
 │   ├── ast.hpp                   # AST/IR: TypeExpr, FieldDecl, ParamDecl, MethodDecl,
 │   │                             #         EventDecl, TypeDecl, ModuleDecl
+│   ├── cli.hpp                   # runCli() (not installed)
+│   ├── identity.hpp              # injectIdentityMethods(): name(), version(), lidl()
+│   ├── json.hpp                  # toJson() / moduleFromJson(): the JSON AST
 │   ├── lexer.hpp                 # Token, LexResult, tokenize()
+│   ├── lidl_c.h                  # C ABI over the JSON AST
 │   ├── parser.hpp                # ParseResult, parse()
 │   ├── serializer.hpp            # serialize()
 │   └── validator.hpp             # ValidationResult, validate()
 ├── src/                          # Implementations
+│   ├── cli.cpp                   # The lidl commands: json, check, fmt
+│   ├── identity.cpp              # Derived built-in methods
+│   ├── json.cpp                  # AST <-> JSON (nlohmann)
 │   ├── lexer.cpp                 # Tokenizer
+│   ├── lidl_c.cpp                # C ABI
 │   ├── parser.cpp                # Recursive-descent parser (parse() runs tokenize())
 │   ├── serializer.cpp            # ModuleDecl → canonical .lidl text
 │   └── validator.cpp             # Semantic checks over a ModuleDecl
+├── tools/
+│   └── lidl_main.cpp             # main() for bin/lidl
 ├── tests/
+│   ├── test_cli.cpp              # CLI tests, run in-process on string streams
 │   └── test_lidl.cpp             # GoogleTest suite (lexer, parser, roundtrip, validator)
-├── CMakeLists.txt                # Static lib + install/export + GTest-discovered tests
-├── flake.nix                     # Nix build; `nix build` builds the lib and runs tests
+├── CMakeLists.txt                # Static libs, bin/lidl, install/export, GTest-discovered tests
+├── flake.nix                     # Nix build; `nix build` builds everything and runs tests
 ├── flake.lock
 └── README.md
 ```
@@ -41,17 +52,23 @@ in anonymous namespaces in the `.cpp` files.
 
 ## Technology Stack
 
-- **Language:** C++17, standard library only (`<string>`, `<vector>`, `<sstream>`,
-  `<unordered_map>`, `<unordered_set>`, `<cctype>`).
-- **Build:** CMake ≥ 3.14, Ninja. Produces a single static library `logos_lidl`.
+- **Language:** C++17. The core library uses the standard library only (`<string>`,
+  `<vector>`, `<sstream>`, `<unordered_map>`, `<unordered_set>`, `<cctype>`).
+- **Build:** CMake ≥ 3.14, Ninja. Produces the static libraries `logos_lidl` and
+  `logos_lidl_c`, both position-independent so they can be linked into shared objects,
+  and the `lidl` executable.
 - **Tests:** GoogleTest, discovered via `gtest_discover_tests` and run under CTest.
 - **Packaging:** Nix flake. Input `logos-nix` (nixpkgs follows `logos-nix/nixpkgs`).
-  Outputs `packages.{logos-lidl,default,tests}`, a matching `checks.tests`, and a
-  `devShells.default`. Builds on the four standard systems
-  (`{aarch64,x86_64}-{darwin,linux}`).
+  - Outputs: `packages.{logos-lidl,default,tests}`, a matching `checks.tests` and a
+    `devShells.default`, on the four standard systems (`{aarch64,x86_64}-{darwin,linux}`).
+  - On those systems, `packages.lidl-cli` holds only `bin/lidl`, and `apps.{lidl,default}`
+    run it.
+  - `packages.x86_64-windows.*` is a cross build of the libraries only, without the CLI
+    or the tests.
 - **CI:** GitHub Actions (`.github/workflows/ci.yml`) on Ubuntu and macOS, using the
-  DeterminateSystems Nix installer and the `logos-co` Cachix cache; the job runs
-  `nix build .#checks.<system>.tests`.
+  DeterminateSystems Nix installer and the `logos-co` Cachix cache. The job runs
+  `nix build .#checks.<system>.tests`, then `nix build .#lidl-cli` and
+  `nix run .#lidl -- --version`.
 
 > Note: `logos-lidl` is a standalone repo with its own flake and is **not currently
 > registered in the workspace `ws` CLI / `flake.nix` / `dep-graph.nix`**. Build and test
@@ -73,13 +90,14 @@ backends and tests can compare contracts structurally.
   `Optional` — so never read either one alone; use the accessors below.
 - **`ParamDecl`** — a parameter: `name`, `type`.
 - **`MethodDecl`** — a method: `name`, `params`, optional `returnType` (absent means no
-  `->` clause and no returned value), plus three fields that the
-  text grammar does **not** populate but backends and richer producers do:
-  - `description` — a doc comment associated with the method (surfaced as the method's
-    description by backends).
-  - `jsonReturn` — set by a backend when the implementation returns a JSON-shaped value
-    (`LogosMap`/`LogosList`).
-  - `resultReturn` — set when the implementation returns `StdLogosResult`.
+  `->` clause and no returned value), plus:
+  - `description` — the method's doc text, written as a trailing `description "..."`
+    clause (surfaced as the method's description by backends).
+  - `jsonReturn` — the method returns a JSON-shaped value (`any`, `[any]` or a map; in C++,
+    `LogosMap`/`LogosList`).
+  - `resultReturn` — the method returns `result` (`StdLogosResult`).
+  - `derived` — added by `injectIdentityMethods` rather than written by the author.
+    `serialize()` omits these methods.
 - **`EventDecl`** — an event: `name`, `params`, and a `description` (same role as on
   methods).
 - **`TypeDecl`** — a named record type: `name`, `fields`.
@@ -106,11 +124,10 @@ const TypeExpr&  lidl::paramValueType(const ParamDecl&);
 under the two-state rule, so `??T` must not become a third state — and returns a
 degenerate element-less `Optional` as-is rather than dereferencing it.
 
-> The `description` / `jsonReturn` / `resultReturn` fields exist on the AST so a single
-> IR can carry information richer than the surface syntax (e.g. a C++ impl-header parser
-> in a backend can fill them). The LIDL **text** grammar in this repo neither emits nor
-> parses them — `serialize()` does not render them and `parse()` leaves them at their
-> defaults.
+> Descriptions are part of the text grammar: a trailing `description "..."` on the
+> module, on methods and on events. They survive a text round trip. `jsonReturn` and
+> `resultReturn` are never written: `parse()` recomputes them from the return type, while a
+> C++ impl-header parser in a backend sets them from the C++ return types.
 
 ### Lexer (`lexer.hpp` / `lexer.cpp`)
 
@@ -154,8 +171,8 @@ metadata   = "version" STRING | "description" STRING | "category" STRING
            | "optional_depends" "[" (NAME ("," NAME)*)? "]"
 type_def   = "type" NAME "{" field* "}"
 field      = "?"? NAME ":" type_expr
-method_def = "method" NAME "(" params ")" ("->" type_expr)?
-event_def  = "event" NAME "(" params ")"
+method_def = "method" NAME "(" params ")" ("->" type_expr)? ("description" STRING)?
+event_def  = "event" NAME "(" params ")" ("description" STRING)?
 params     = (NAME ":" type_expr ("," NAME ":" type_expr)*)?
 type_expr  = "?" type_expr
            | "[" type_expr "]"
@@ -193,13 +210,23 @@ optional `any` (`any` already admits the empty value).
 [...]` line always present, then types, then methods, then events. A method with an
 absent `returnType` is emitted without an arrow. Type expressions
 render recursively (`[T]`, `{K: V}`, `? T`). Output re-parses to an equal AST and is
-byte-stable on the next serialization (see roundtrip tests). It does **not** emit
-comments, `description`s, or the `jsonReturn`/`resultReturn` flags.
+byte-stable on the next serialization (see roundtrip tests). It emits descriptions,
+escaping `\`, `"`, newline and tab. It does **not** emit comments or the
+`jsonReturn`/`resultReturn` flags, and it skips `derived` methods, so injecting the
+built-ins never changes the published text. `lidl fmt` prints exactly this output.
 
 It also does **not** canonicalise between the two spellings of an optional field: `?
-label: tstr` serializes back as `? label: tstr` and `note: ?tstr` as `note: ?tstr`, so a
+label: tstr` serializes back as `? label: tstr` and `note: ?tstr` as `note: ? tstr`, so a
 contract survives a normalization pass as its author wrote it. (The *wire* encoder
 described in `docs/spec.md` does canonicalise — that is a different layer.)
+
+### CLI (`cli.hpp` / `cli.cpp`, `tools/lidl_main.cpp`)
+
+`lidl::runCli(argc, argv, in, out, err)` implements `lidl json`, `lidl check` and
+`lidl fmt` on top of the functions above. It takes its streams as parameters, so
+`tests/test_cli.cpp` runs it in-process, and `tools/lidl_main.cpp` passes it the standard
+streams. It is built as the static library `logos_lidl_cli`. Neither that library nor
+`cli.hpp` is installed. The README lists the commands and exit codes.
 
 ## API
 
@@ -291,11 +318,14 @@ workspace `ws` CLI):
 ```bash
 cd repos/logos-lidl
 
-# Build the static library + headers and run the test suite (doCheck = true).
+# Build the static libraries, headers and bin/lidl, and run the test suite (doCheck = true).
 nix build
 
 # Run exactly the test check (what CI runs).
 nix build ".#checks.$(nix eval --impure --raw --expr 'builtins.currentSystem').tests" -L
+
+# Run the CLI.
+nix run .#lidl -- --help
 
 # Enter a dev shell with cmake, ninja, and gtest available, then build by hand.
 nix develop
@@ -304,10 +334,15 @@ cmake --build build
 ctest --test-dir build --output-on-failure
 ```
 
-CMake options: `LOGOS_LIDL_BUILD_TESTS` (default `ON`) toggles building the GoogleTest
-suite (which requires `find_package(GTest)`).
+CMake options:
+- `LOGOS_LIDL_BUILD_TESTS` (default `ON`) builds the GoogleTest suite, which requires
+  `find_package(GTest)`.
+- `LOGOS_LIDL_BUILD_CLI` (default `ON`) builds `bin/lidl` and adds the CLI tests to the
+  suite.
+- `LOGOS_LIDL_GIT_REV` (default `unknown`) is the revision `lidl --version` prints. The
+  flake sets it from `self.shortRev`, or from `self.dirtyShortRev` for a dirty tree.
 
-### Test coverage (`tests/test_lidl.cpp`)
+### Test coverage (`tests/test_lidl.cpp`, `tests/test_cli.cpp`)
 
 The suite parses, validates, and roundtrips a single canonical document
 (`chat_module`, exercising metadata, an optional field, array and map field types, a
@@ -345,6 +380,23 @@ non-optional control:
 | `CAbi.DerivedOptionalityIsOutputOnly` | Derived keys are ignored on input, so each spelling survives .lidl → json → .lidl |
 | `CAbi.ValidateJsonReportsOptionalWarnings` | The new errors and warnings cross the C ABI |
 
+The CLI tests (`tests/test_cli.cpp`, built when `LOGOS_LIDL_BUILD_CLI` is on) call `runCli`
+on string streams:
+
+| Test | What it checks |
+| ---- | -------------- |
+| `Cli.JsonMatchesTheCAbi` / `Cli.JsonIdentityMatchesTheCAbiAndAddsLidl` | `json` prints exactly `lidl_parse_to_json`; with `--identity` it prints `lidl_inject_identity_json`, including the derived `lidl` |
+| `Cli.JsonPrettyIsTheSameDocumentIndented` / `Cli.JsonStdoutIsExactlyOneDocumentAndANewline` | stdout holds one JSON document and a newline |
+| `Cli.ParseErrorIsFileLineColumnMessage` | `<file>:<line>:<col>: <message>` (with `<stdin>` for `-`) and exit 3, for parse and lex errors |
+| `Cli.IdentityRejectsAnAuthoredLidlMethod` / `Cli.IdentityRejectsAReservedSignature` | Exit 4 with the injection's own message |
+| `Cli.NoReturnMethodOmitsTheReturnKeys` | No return keys for `method f()` or legacy `-> void` |
+| `Cli.CheckAcceptsNoReturnAndLegacyVoid` / `Cli.CheckFailsAVoidParameter` | `check` passes both no-return spellings and fails `x: void` with exit 5 |
+| `Cli.CheckReportsWarningsWithoutFailing` / `Cli.CheckJsonMatchesTheCAbi` | Warnings alone exit 0; `--json` prints exactly `lidl_validate_json` |
+| `Cli.FmtReproducesCanonicalTextByteForByte` / `Cli.FmtCanonicalizesAndIsIdempotent` | Canonical text comes back unchanged; other text is canonicalized once |
+| `Cli.DashReadsStdin` | `-` gives the same results as the file |
+| `Cli.UsageErrorsExitOne` / `Cli.UnreadableInputExitsTwo` / `Cli.InvalidUtf8CannotBecomeJson` | Exit codes 1 and 2 |
+| `Cli.VersionAndHelp` | `lidl <version> (<git rev>)` and the usage text |
+
 ## Relationship to the Logos SDKs
 
 `logos-lidl` is the producer/consumer-neutral core. The full module-binding story lives
@@ -365,13 +417,10 @@ backend's end-to-end pipeline.
 
 - **No code generation or type mapping.** By design — those live in the backends. This
   repo only goes text ↔ AST and validates the AST.
-- **Comments and formatting are not preserved.** `serialize()` produces a canonical
-  layout; `;` comments and original whitespace from hand-written input are lost on
-  roundtrip (the AST is preserved, the exact bytes are not until after the first
-  serialization).
-- **`description` / `jsonReturn` / `resultReturn` are not part of the text grammar.** They
-  exist on the AST for backends to populate, but `parse()` never sets them and
-  `serialize()` never emits them — so they do not survive a text roundtrip.
+- **Comments and formatting are not preserved.** `serialize()` (and so `lidl fmt`)
+  produces a canonical layout; `;` comments and original whitespace from hand-written
+  input are lost on roundtrip (the AST is preserved, the exact bytes are not until after
+  the first serialization).
 - **Optionality is modelled and published, not yet consumed.** The frontend parses `?T`
   in either spelling, validates it, exposes the reconciled answer through the accessors
   and the JSON wire form, and `docs/spec.md` makes the wire semantics normative — but as

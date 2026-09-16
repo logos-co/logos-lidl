@@ -27,7 +27,8 @@ install(TARGETS logos_lidl
     ARCHIVE DESTINATION lib
     INCLUDES DESTINATION include
 )
-install(DIRECTORY include/lidl DESTINATION include)
+# cli.hpp stays out: its library (logos_lidl_cli) is not installed.
+install(DIRECTORY include/lidl DESTINATION include PATTERN "cli.hpp" EXCLUDE)
 install(EXPORT logos-lidlTargets
     FILE logos-lidlTargets.cmake
     NAMESPACE logos-lidl::
@@ -51,6 +52,9 @@ target_include_directories(logos_lidl_c PUBLIC
 )
 install(TARGETS logos_lidl_c ARCHIVE DESTINATION lib)
 
+# Consumers link both archives into shared objects (e.g. Qt plugins).
+set_target_properties(logos_lidl logos_lidl_c PROPERTIES POSITION_INDEPENDENT_CODE ON)
+
 include(CMakePackageConfigHelpers)
 write_basic_package_version_file(
     "${CMAKE_CURRENT_BINARY_DIR}/logos-lidlConfigVersion.cmake"
@@ -65,6 +69,23 @@ install(FILES
     DESTINATION lib/cmake/logos-lidl
 )
 
+option(LOGOS_LIDL_BUILD_CLI "Build the lidl command-line tool" ON)
+set(LOGOS_LIDL_GIT_REV "unknown" CACHE STRING "Revision reported by lidl --version")
+set(LOGOS_LIDL_VERSION_DEFINES
+    LOGOS_LIDL_VERSION="${PROJECT_VERSION}"
+    LOGOS_LIDL_GIT_REV="${LOGOS_LIDL_GIT_REV}")
+if(LOGOS_LIDL_BUILD_CLI)
+    # A library so lidl_tests can run the CLI in-process on string streams.
+    add_library(logos_lidl_cli STATIC src/cli.cpp)
+    target_link_libraries(logos_lidl_cli PUBLIC logos_lidl logos_lidl_c
+        PRIVATE nlohmann_json::nlohmann_json)
+    target_compile_definitions(logos_lidl_cli PRIVATE ${LOGOS_LIDL_VERSION_DEFINES})
+
+    add_executable(lidl tools/lidl_main.cpp)
+    target_link_libraries(lidl PRIVATE logos_lidl_cli logos_lidl logos_lidl_c)
+    install(TARGETS lidl RUNTIME DESTINATION bin)
+endif()
+
 option(LOGOS_LIDL_BUILD_TESTS "Build the logos-lidl test suite" ON)
 if(LOGOS_LIDL_BUILD_TESTS)
     enable_testing()
@@ -76,5 +97,10 @@ if(LOGOS_LIDL_BUILD_TESTS)
     # substring — the derived optionality keys are checked field by field.
     target_link_libraries(lidl_tests PRIVATE logos_lidl logos_lidl_c
         nlohmann_json::nlohmann_json GTest::gtest GTest::gtest_main)
+    if(LOGOS_LIDL_BUILD_CLI)
+        target_sources(lidl_tests PRIVATE tests/test_cli.cpp)
+        target_link_libraries(lidl_tests PRIVATE logos_lidl_cli)
+        target_compile_definitions(lidl_tests PRIVATE ${LOGOS_LIDL_VERSION_DEFINES})
+    endif()
     gtest_discover_tests(lidl_tests)
 endif()
