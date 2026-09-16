@@ -34,3 +34,9 @@ jobs:
 
       - name: Run the test check
         run: nix build ".#checks.$(nix eval --impure --raw --expr 'builtins.currentSystem').tests" -L
+
+      - name: Build the lidl CLI package
+        run: nix build .#lidl-cli -L
+
+      - name: Run the lidl CLI
+        run: nix run .#lidl -- --version

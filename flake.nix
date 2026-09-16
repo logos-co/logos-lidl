@@ -17,6 +17,9 @@
       # `packages.x86_64-windows.*` evaluates anywhere but realises on Linux.
       forAllTargets = logos-nix.lib.forAllTargets;
 
+      # Reported by `lidl --version`; a path: flake has no revision.
+      gitRev = self.shortRev or self.dirtyShortRev or "unknown";
+
       mkLidl = { system, pkgs }:
         let
           # The test binary is a PE when cross-compiling, and
@@ -31,8 +34,11 @@
           nativeBuildInputs = [ pkgs.cmake pkgs.ninja ];
           buildInputs = [ pkgs.nlohmann_json ]
             ++ pkgs.lib.optional (!isWindows) pkgs.gtest;
+          # The Windows build has no CLI, so its hash stays independent of the revision.
           cmakeFlags = [ "-GNinja" ]
-            ++ pkgs.lib.optional isWindows "-DLOGOS_LIDL_BUILD_TESTS=OFF";
+            ++ (if isWindows
+                then [ "-DLOGOS_LIDL_BUILD_TESTS=OFF" "-DLOGOS_LIDL_BUILD_CLI=OFF" ]
+                else [ "-DLOGOS_LIDL_GIT_REV=${gitRev}" ]);
           doCheck = !isWindows;
           checkPhase = ''
             runHook preCheck
@@ -41,6 +47,20 @@
           '';
           meta.platforms = pkgs.lib.platforms.unix ++ pkgs.lib.platforms.windows;
         };
+
+      # Just bin/lidl. Not named `lidl`: module flakes use packages.<sys>.lidl for a contract.
+      mkLidlCli = { pkgs, lidl }:
+        pkgs.runCommandLocal "lidl-cli-${lidl.version}"
+          {
+            meta = {
+              description = "The lidl command-line tool (json, check, fmt)";
+              mainProgram = "lidl";
+            };
+          }
+          ''
+            mkdir -p $out/bin
+            ln -s ${lidl}/bin/lidl $out/bin/lidl
+          '';
     in
     {
       packages = forAllTargets ({ system, pkgs }:
@@ -50,6 +70,8 @@
           logos-lidl = lidl;
           default = lidl;
           tests = lidl;
+        } // pkgs.lib.optionalAttrs (!pkgs.stdenv.hostPlatform.isWindows) {
+          lidl-cli = mkLidlCli { inherit pkgs lidl; };
         }
       );
 
@@ -57,6 +79,19 @@
       checks = forAllSystems ({ system, pkgs }: {
         tests = self.packages.${system}.logos-lidl;
       });
+
+      apps = forAllSystems ({ system, ... }:
+        let
+          lidl = {
+            type = "app";
+            program = "${self.packages.${system}.lidl-cli}/bin/lidl";
+            meta.description = "The lidl command-line tool";
+          };
+        in
+        {
+          inherit lidl;
+          default = lidl;
+        });
 
       devShells = forAllSystems ({ pkgs, ... }: {
         default = pkgs.mkShell {

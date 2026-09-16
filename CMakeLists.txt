@@ -52,6 +52,9 @@ target_include_directories(logos_lidl_c PUBLIC
 )
 install(TARGETS logos_lidl_c ARCHIVE DESTINATION lib)
 
+# Consumers link both archives into shared objects (e.g. Qt plugins).
+set_target_properties(logos_lidl logos_lidl_c PROPERTIES POSITION_INDEPENDENT_CODE ON)
+
 include(CMakePackageConfigHelpers)
 write_basic_package_version_file(
     "${CMAKE_CURRENT_BINARY_DIR}/logos-lidlConfigVersion.cmake"
