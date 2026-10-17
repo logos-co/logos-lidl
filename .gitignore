@@ -5,3 +5,9 @@ build-*/
 .cache/
 compile_commands.json
 .DS_Store
+
+# Doc-test output: generated artifacts are disposable, but keep the rendered
+# .md the docs link to. (report.html is published by CI to GitHub Pages, not
+# committed.)
+doctests/outputs/*
+!doctests/outputs/*.md
